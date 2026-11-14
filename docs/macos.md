@@ -49,6 +49,53 @@ Sizes: macOS applications take a point as one unit of window coordinates
 (72 dpi), not GTK's 96, so ng does too there. Menlo 11 is then as large
 as in MacVim and Terminal.
 
+## Fallback fonts
+
+Japanese text came out in Nanum Gothic, a Korean font that macOS
+installs: kanji in their Korean shapes, and Hiragino only for the few
+characters Nanum lacks (𠮷, ㍿, half-width kana). Armenian, Devanagari,
+Khmer and many emoji came out as LastResort's boxes, although macOS has
+fonts for them.
+
+ng drew a character that 'guifont' lacks with the first font fontconfig
+sorted for a request naming that character. The order starts with the
+fonts of fontconfig's monospace aliases, which list Nanum Gothic and none
+of the Japanese fonts macOS has:
+
+```sh
+LANG=ja_JP.UTF-8 fc-match -a ':spacing=100:weight=80:slant=0' family | head
+# Andale Mono, Courier New, Courier, Nanum Gothic, Menlo, Monaco, ...
+```
+
+LastResort (`/System/Library/Fonts/LastResort.otf`) maps every code point
+to a box naming its Unicode block, and says it is monospaced: it is 236th
+of the 2,800 fonts in that order, ahead of most fonts for other scripts.
+With the character in the request, fontconfig also prefers a font that
+supports the locale's language, and LastResort supports all of them:
+
+```sh
+fc-match -s ':spacing=100:charset=554' family            # .LastResort
+fc-match -s ':spacing=100:charset=554:lang=hy' family    # Noto Sans Armenian
+```
+
+macOS itself (Core Text, and so Terminal and MacVim) falls back along a
+cascade list per language. For Menlo, `CTFontCopyDefaultCascadeListForLanguages`
+gives Monaco, Apple Symbols, Courier New, Helvetica, Lucida Grande, then
+Hiragino Sans, PingFang SC and TC for Japanese, English or German; Apple
+SD Gothic Neo first for Korean, PingFang first for Chinese. LastResort
+only shows when no font has the character.
+
+ng now sorts once per style without the character (as Pango does; see
+docs/latency.md, "New characters", for the speed) and takes the first
+font that has it, with two changes to fontconfig's order: on macOS the
+Chinese, Japanese and Korean fonts of Core Text's list come first, picked
+by fontconfig's language (`ng_fallback_first` in package font), and
+LastResort comes last. Japanese is now Hiragino Sans (W4, and W7 for
+bold), Korean Apple SD Gothic Neo, Armenian Noto Sans Armenian,
+Devanagari Kohinoor Devanagari and emoji Apple Color Emoji (in one
+colour, like all text), the fonts Core Text picks. `TestMacFallbacks`
+checks this under Japanese, English and Korean.
+
 ## The window opened behind the terminal
 
 Started from iTerm2, ng's window appeared but iTerm2 stayed the active

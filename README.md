@@ -453,7 +453,10 @@ Where macOS has conventions of its own, ng follows them:
   "Configuration"). Neovim's default 'guifont' on macOS starts with SF
   Mono, the font of Terminal and Xcode, which ng finds although macOS
   installs it as a hidden system font. `monospace` means Menlo, the font
-  of MacVim.
+  of MacVim. Characters missing from 'guifont' come from the fonts macOS
+  itself falls back to: Japanese from Hiragino Sans (Apple SD Gothic Neo
+  under a Korean locale, PingFang under a Chinese one), Korean from Apple
+  SD Gothic Neo.
 - **Input methods** work as described in "Input methods": ng draws the
   text being composed at the cursor, and macOS puts its candidate window
   there. To switch to an ASCII input source when leaving Insert mode, call

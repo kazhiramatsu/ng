@@ -123,7 +123,8 @@ character with the 2,800 fonts of the Mac above. A screen of Japanese
 text has hundreds of characters ng has not drawn yet.
 
 ng now sorts once per style and walks that list for each new character
-(package font, `ng_fallbacks_t`):
+(package font, `ng_fallbacks_t`; on macOS in an order of its own, see
+docs/macos.md, "Fallback fonts"):
 
 | | before | after |
 | --- | --- | --- |

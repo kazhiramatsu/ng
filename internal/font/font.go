@@ -19,6 +19,7 @@ package font
 #cgo pkg-config: freetype2 fontconfig
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_SYNTHESIS_H
@@ -131,28 +132,127 @@ static int ng_match(const char *family, int bold, int italic, ng_match_t *out) {
 	return ok;
 }
 
+// ng_is_last_resort reports whether font is macOS's LastResort, which has
+// a placeholder glyph (a box naming the Unicode block) for every code
+// point.
+static int ng_is_last_resort(FcPattern *font) {
+	FcChar8 *fam;
+	for (int i = 0; FcPatternGetString(font, FC_FAMILY, i, &fam) == FcResultMatch; i++) {
+		if (strstr((const char *)fam, "LastResort"))
+			return 1;
+	}
+	return 0;
+}
+
+#ifdef __APPLE__
+// ng_lang_is reports whether lang, as fontconfig writes languages ("ja",
+// "zh-tw"), is base or a variant of it.
+static int ng_lang_is(const char *lang, const char *base) {
+	size_t n = strlen(base);
+	return strncasecmp(lang, base, n) == 0 && (lang[n] == '\0' || lang[n] == '-');
+}
+#endif
+
+// ng_fallback_first returns the families that fallback tries first
+// (NULL-terminated). On macOS these are the fonts macOS itself uses for
+// Chinese, Japanese and Korean, in the order of Core Text's cascade list
+// for the language (CTFontCopyDefaultCascadeListForLanguages): Hiragino
+// Sans unless the language is Korean or Chinese. fontconfig sorts Nanum
+// Gothic, a Korean font that has kana and kanji too, before all of them.
+static const char *const *ng_fallback_first(void) {
+#ifdef __APPLE__
+	static const char *const ja[] = {"Hiragino Sans", "PingFang SC", "PingFang TC", "Apple SD Gothic Neo", NULL};
+	static const char *const ko[] = {"Apple SD Gothic Neo", "Hiragino Sans", "PingFang SC", "PingFang TC", NULL};
+	static const char *const sc[] = {"PingFang SC", "PingFang TC", "Hiragino Sans", "Apple SD Gothic Neo", NULL};
+	static const char *const tc[] = {"PingFang TC", "PingFang SC", "Hiragino Sans", "Apple SD Gothic Neo", NULL};
+	static const char *const hk[] = {"PingFang HK", "PingFang SC", "Hiragino Sans", "Apple SD Gothic Neo", NULL};
+	// fontconfig's language (FC_LANG, LC_ALL, LC_CTYPE or LANG), as for
+	// its own criteria.
+	FcStrSet *set = FcGetDefaultLangs(); // fontconfig's own, never freed
+	FcStrList *langs = set ? FcStrListCreate(set) : NULL;
+	const FcChar8 *lang = langs ? FcStrListNext(langs) : NULL;
+	const char *const *out = ja;
+	if (lang) {
+		const char *l = (const char *)lang;
+		if (ng_lang_is(l, "ko"))
+			out = ko;
+		else if (ng_lang_is(l, "zh-tw"))
+			out = tc;
+		else if (ng_lang_is(l, "zh-hk") || ng_lang_is(l, "zh-mo"))
+			out = hk;
+		else if (ng_lang_is(l, "zh"))
+			out = sc;
+	}
+	if (langs)
+		FcStrListDone(langs);
+	return out;
+#else
+	static const char *const none[] = {NULL};
+	return none;
+#endif
+}
+
 // ng_fallbacks_t lists every font in the order in which a character
 // missing from the configured fonts looks for one that has it, as Pango
 // does: fontconfig's order for a fallback request in the style, sorted
 // once. Sorting again for each character, with the character in the
-// request, took 2-3 ms per new character with 2,800 fonts installed.
+// request, took 2-3 ms per new character on macOS, and picked LastResort
+// for most scripts: fontconfig then favours the first font that has the
+// character and supports a language of the locale, and LastResort has
+// every character. Two changes make the order that of macOS itself (Core
+// Text):
+//
+//   - The families of ng_fallback_first come first.
+//   - LastResort comes last: macOS shows its boxes only when no other
+//     font has the character. fontconfig sorts it among the first fonts,
+//     since it says it is monospaced.
 typedef struct {
 	FcPattern *pat;   // the request
 	FcFontSet *fonts; // in order
 } ng_fallbacks_t;
 
+// ng_rank places font in that order: 0 to k-1 for the k families of
+// first, k for the rest, k+1 for LastResort.
+static int ng_rank(FcPattern *font, const char *const *first, int k) {
+	for (int i = 0; i < k; i++) {
+		if (ng_family_is(font, first[i]))
+			return i;
+	}
+	return ng_is_last_resort(font) ? k + 1 : k;
+}
+
 static ng_fallbacks_t *ng_fallbacks_new(int bold, int italic) {
 	static const char *const any[] = {NULL};
+	const char *const *first = ng_fallback_first();
 	FcResult res;
 	FcPattern *pat = ng_pattern(any, bold, italic);
 	FcFontSet *set = FcFontSort(NULL, pat, FcFalse, NULL, &res);
 	ng_fallbacks_t *fb = set ? malloc(sizeof *fb) : NULL;
-	if (!fb) {
+	int *rank = fb ? malloc((set->nfont + 1) * sizeof *rank) : NULL;
+	FcPattern **sorted = rank ? malloc((set->nfont + 1) * sizeof *sorted) : NULL;
+	if (!sorted) {
+		free(rank);
+		free(fb);
 		if (set)
 			FcFontSetDestroy(set);
 		FcPatternDestroy(pat);
 		return NULL;
 	}
+	int k = 0;
+	while (first[k])
+		k++;
+	for (int i = 0; i < set->nfont; i++)
+		rank[i] = ng_rank(set->fonts[i], first, k);
+	int n = 0;
+	for (int r = 0; r <= k + 1; r++) {
+		for (int i = 0; i < set->nfont; i++) {
+			if (rank[i] == r)
+				sorted[n++] = set->fonts[i];
+		}
+	}
+	memcpy(set->fonts, sorted, n * sizeof *sorted);
+	free(sorted);
+	free(rank);
 	fb->pat = pat;
 	fb->fonts = set;
 	return fb;
@@ -600,6 +700,9 @@ func (s *Set) measure(f *face, linespace int) error {
 }
 
 func hasChar(f *face, r rune) bool { return C.FT_Get_Char_Index(f.ft, C.FT_ULong(r)) != 0 }
+
+// family returns the face's family name, as the font itself gives it.
+func (f *face) family() string { return C.GoString((*C.char)(unsafe.Pointer(f.ft.family_name))) }
 
 // faceFor picks the font for r: 'guifontwide' for double-width cells, then
 // 'guifont' in order, then a fontconfig fallback.
