@@ -29,8 +29,8 @@ type harness struct {
 	scr *screen.Screen
 	err error
 
-	// Optional incremental painter: every flush repaints the dirty rows,
-	// exactly like the GUI does.
+	// Optional incremental painter: at every flush scrolled rows are moved
+	// and changed rows repainted, exactly like the GUI does.
 	fonts *font.Set
 	img   *paint.ImagePainter
 
@@ -133,7 +133,11 @@ func (h *harness) onNotify(method string, params []any) {
 		flush = true
 	}
 	if flush && h.img != nil {
-		for _, r := range h.scr.TakeDirty() {
+		scrolls, rows := h.scr.TakeChanges()
+		for _, sc := range scrolls {
+			paint.Scroll(h.img, h.fonts, sc)
+		}
+		for _, r := range rows {
 			paint.Row(h.img, h.scr, h.fonts, r)
 		}
 	}
@@ -223,12 +227,35 @@ func TestConversionRepaintHasNoFragments(t *testing.T) {
 	}
 }
 
+// The GUI moves scrolled rows instead of repainting them (paint.Scroll).
+// After Neovim's own scrolls, up and down and in vertical splits (where
+// only part of each row scrolls), the image must equal a full repaint.
 func TestScrollRepaintHasNoFragments(t *testing.T) {
-	h := start(t, 30, 6, true)
+	h := start(t, 30, 8, true)
 	h.input(":call setline(1, map(range(1, 50), {_, v -> v .. ' 日本語テキスト ' .. v}))<CR>")
 	h.waitFor("lines", func(s *screen.Screen) bool { return strings.HasPrefix(row(s, 0), "1 日本語") })
 	h.input("<C-e><C-e><C-d>")
-	h.waitFor("scrolled", func(s *screen.Screen) bool { return !strings.HasPrefix(row(s, 0), "1 ") })
+	h.waitFor("scrolled down", func(s *screen.Screen) bool { return strings.HasPrefix(row(s, 0), "6 ") })
+	h.matchesFullPaint("after scrolling down")
+	h.input("<C-y><C-u>")
+	h.waitFor("scrolled up", func(s *screen.Screen) bool { return strings.HasPrefix(row(s, 0), "2 ") })
+	h.matchesFullPaint("after scrolling up")
+	// Where each window starts after :vsplit varies with Neovim's timing
+	// (the narrow window wraps), so each is placed with zt first.
+	h.input(":vsplit<CR>:normal! 20Gzt<CR><C-e><C-e>")
+	h.waitFor("left window scrolled", func(s *screen.Screen) bool { return strings.HasPrefix(row(s, 0), "22 ") })
+	h.matchesFullPaint("after scrolling the left window")
+	h.input("<C-w>l:normal! 10Gzt<CR>")
+	h.waitFor("right window placed", func(s *screen.Screen) bool { return strings.Contains(row(s, 0), "│10 ") })
+	h.input("<C-e>")
+	h.waitFor("right window scrolled", func(s *screen.Screen) bool { return strings.Contains(row(s, 0), "│11 ") })
+	h.matchesFullPaint("after scrolling the right window")
+}
+
+// matchesFullPaint checks that the incrementally painted image equals a
+// paint of the current screen from scratch.
+func (h *harness) matchesFullPaint(what string) {
+	h.t.Helper()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	want := paint.NewImagePainter(h.img.Img.Bounds().Dx(), h.img.Img.Bounds().Dy())
@@ -236,7 +263,7 @@ func TestScrollRepaintHasNoFragments(t *testing.T) {
 		paint.Row(want, h.scr, h.fonts, r)
 	}
 	if !bytes.Equal(h.img.Img.Pix, want.Img.Pix) {
-		t.Error("incremental repaint after scrolling differs from a full repaint")
+		h.t.Errorf("%s: the incrementally painted image differs from a full repaint; screen:\n%s", what, h.scr.Dump())
 	}
 }
 

@@ -62,6 +62,7 @@ type App struct {
 	win       *C.SDL_Window
 	ren       *C.SDL_Renderer
 	screenTex *C.SDL_Texture
+	moveTex   *C.SDL_Texture // scratch for moving screenTex rows (MoveRect)
 	texW      int
 	texH      int
 	atlasTex  *C.SDL_Texture
@@ -775,21 +776,39 @@ func (a *App) updatePixelSize(answer bool) {
 	a.scr.MarkAllDirty()
 }
 
-// ensureScreenTexture (re)creates the texture that holds the painted grid.
-// It reports whether the texture is new and must be painted completely.
+// ensureScreenTexture (re)creates the texture that holds the painted grid,
+// and the one that scrolling moves its rows through (MoveRect). It
+// reports whether the texture is new and must be painted completely.
 func (a *App) ensureScreenTexture() bool {
 	if a.screenTex != nil && a.texW == a.pixW && a.texH == a.pixH {
 		return false
 	}
-	if a.screenTex != nil {
-		C.SDL_DestroyTexture(a.screenTex)
-	}
-	a.screenTex = C.ng_create_texture(a.ren, C.SDL_TEXTUREACCESS_TARGET, C.int(max(1, a.pixW)), C.int(max(1, a.pixH)))
+	a.destroyScreenTextures()
+	w, h := C.int(max(1, a.pixW)), C.int(max(1, a.pixH))
+	a.screenTex = C.ng_create_texture(a.ren, C.SDL_TEXTUREACCESS_TARGET, w, h)
+	a.moveTex = C.ng_create_texture(a.ren, C.SDL_TEXTUREACCESS_TARGET, w, h)
 	a.texW, a.texH = a.pixW, a.pixH
 	return true
 }
 
-// paintDirty repaints the changed rows into the screen texture.
+func (a *App) destroyScreenTextures() {
+	for _, t := range []**C.SDL_Texture{&a.screenTex, &a.moveTex} {
+		if *t != nil {
+			C.SDL_DestroyTexture(*t)
+			*t = nil
+		}
+	}
+}
+
+// MoveRect implements paint.Mover. SDL cannot draw a texture onto
+// itself, so the area goes through moveTex.
+func (a *App) MoveRect(x, y, w, h, dy int) {
+	C.ng_copy(a.ren, a.screenTex, a.moveTex, C.int(x), C.int(y), C.int(w), C.int(h), 0)
+	C.ng_copy(a.ren, a.moveTex, a.screenTex, C.int(x), C.int(y), C.int(w), C.int(h), C.int(dy))
+}
+
+// paintDirty repaints the changed rows into the screen texture. Scrolled
+// rows are moved there rather than repainted (paint.Scroll).
 func (a *App) paintDirty() {
 	if !a.shown || a.fonts == nil {
 		return
@@ -801,7 +820,16 @@ func (a *App) paintDirty() {
 	if full {
 		a.scr.MarkAllDirty()
 	}
-	rows := a.scr.TakeDirty()
+	var scrolls []screen.Scroll
+	var rows []int
+	if a.moveTex != nil {
+		scrolls, rows = a.scr.TakeChanges()
+	} else {
+		rows = a.scr.TakeDirty()
+	}
+	for _, sc := range scrolls {
+		paint.Scroll(a, a.fonts, sc)
+	}
 	C.SDL_SetRenderTarget(a.ren, a.screenTex)
 	if full || len(rows) == a.scr.Height {
 		paint.Padding(a, a.scr, a.fonts, a.pixW, a.pixH)
@@ -989,10 +1017,7 @@ func (a *App) handle(e event) bool {
 	case C.SDL_EVENT_WINDOW_EXPOSED:
 		return true
 	case C.SDL_EVENT_RENDER_TARGETS_RESET, C.SDL_EVENT_RENDER_DEVICE_RESET:
-		if a.screenTex != nil {
-			C.SDL_DestroyTexture(a.screenTex)
-			a.screenTex = nil
-		}
+		a.destroyScreenTextures()
 		a.resetAtlas()
 		a.paintDirty()
 		return true

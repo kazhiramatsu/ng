@@ -96,6 +96,8 @@ Results (`ng --trace`, the last flush of each burst to its present):
 | | before | after |
 | --- | --- | --- |
 | Everyday commands, 120x40, median / p90 (ms) | 5.00 / 5.90 | 0.41 / 1.38 |
+| Scrolling a line every 8 ms, 216x70 (3024x1836 px) | 5.26 / 5.38 | 0.20 / 0.26 |
+| `<C-f>` / `<C-b>` every 16 ms, 216x70 | 5.21 / 5.55 | 0.38 / 0.68 |
 
 With real keystrokes (key events posted to ng's process, 91 keys of
 everyday editing per run, two runs each, 120x40), ng's own summary:
@@ -105,4 +107,9 @@ everyday editing per run, two runs each, 120x40), ng's own summary:
 | total: key event to present | 5.57 (6.8-7.3) | 1.02 (2.5-2.8) |
 | frame: flush to present | 4.83 (5.1) | 0.25 (0.6) |
 | nvim | 0.43 | 0.44 |
+
+The scrolling numbers also include moving the painted rows on the GPU
+instead of repainting them (`paint.Scroll`, `screen.TakeChanges`): one
+line of scrolling repaints one row, not 68. ng's CPU time for the same
+scrolling went from 0.93 to 0.57 s (user).
 

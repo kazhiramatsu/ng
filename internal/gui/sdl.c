@@ -144,6 +144,18 @@ bool ng_blit(SDL_Renderer *r, SDL_Texture *t, int w, int h) {
 	return ok;
 }
 
+// ng_copy draws the w x h area at (x, y) of src at (x, y + dy) of dst,
+// replacing what is there.
+bool ng_copy(SDL_Renderer *r, SDL_Texture *src, SDL_Texture *dst, int x, int y, int w, int h, int dy) {
+	SDL_FRect s = { (float)x, (float)y, (float)w, (float)h };
+	SDL_FRect d = { (float)x, (float)(y + dy), (float)w, (float)h };
+	SDL_SetRenderTarget(r, dst);
+	SDL_SetTextureBlendMode(src, SDL_BLENDMODE_NONE);
+	bool ok = SDL_RenderTexture(r, src, &s, &d);
+	SDL_SetTextureBlendMode(src, SDL_BLENDMODE_BLEND);
+	return ok;
+}
+
 float ng_pixel_density(SDL_Window *w) {
 	float d = SDL_GetWindowPixelDensity(w);
 	return d > 0 ? d : 1.0f;

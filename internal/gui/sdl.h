@@ -37,6 +37,7 @@ void ng_fill(SDL_Renderer *r, int x, int y, int w, int h, Uint32 rgb);
 SDL_Texture *ng_create_texture(SDL_Renderer *r, int access, int w, int h);
 bool ng_update(SDL_Texture *t, int x, int y, int w, int h, const void *pix, int pitch);
 bool ng_blit(SDL_Renderer *r, SDL_Texture *t, int w, int h);
+bool ng_copy(SDL_Renderer *r, SDL_Texture *src, SDL_Texture *dst, int x, int y, int w, int h, int dy);
 float ng_pixel_density(SDL_Window *w);
 bool ng_set_icon(SDL_Window *w, int width, int height, void *rgba);
 bool ng_key_up_queued(int scancode);

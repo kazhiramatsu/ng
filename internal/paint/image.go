@@ -35,6 +35,31 @@ func (p *ImagePainter) FillRect(x, y, w, h int, c screen.Color) {
 	}
 }
 
+// MoveRect implements Mover.
+func (p *ImagePainter) MoveRect(x, y, w, h, dy int) {
+	b := p.Img.Bounds()
+	src := image.Rect(x, y, x+w, y+h).Intersect(b).Intersect(b.Add(image.Pt(0, -dy)))
+	if src.Empty() || dy == 0 {
+		return
+	}
+	n := src.Dx() * 4
+	row := func(yy int) {
+		s := p.Img.PixOffset(src.Min.X, yy)
+		d := p.Img.PixOffset(src.Min.X, yy+dy)
+		copy(p.Img.Pix[d:d+n], p.Img.Pix[s:s+n])
+	}
+	// Copy away from the overlap, as memmove does.
+	if dy > 0 {
+		for yy := src.Max.Y - 1; yy >= src.Min.Y; yy-- {
+			row(yy)
+		}
+	} else {
+		for yy := src.Min.Y; yy < src.Max.Y; yy++ {
+			row(yy)
+		}
+	}
+}
+
 // DrawGlyph implements Painter.
 func (p *ImagePainter) DrawGlyph(g *font.Glyph, x, y int, c screen.Color) {
 	fr, fg, fb := c.RGB()

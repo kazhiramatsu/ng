@@ -93,6 +93,7 @@ type Screen struct {
 	optionChanged        map[string]bool
 	allDirty             bool
 	colorsChanged        bool
+	scrolls              []Scroll // since the last TakeChanges
 
 	// Graphics holds the images placed with the kitty graphics protocol
 	// (vim.ui.img), received in "ui_send" events. They move with the text
@@ -224,11 +225,34 @@ func (s *Screen) CurrentMode() Mode {
 	return Mode{Shape: CursorBlock, CellPercentage: 100}
 }
 
-// TakeDirty returns the rows that changed since the last call and clears
-// the marks. A row is reported whole even if one cell changed: redrawing
-// whole rows is what keeps double-width glyphs from leaving fragments.
+// TakeDirty returns the rows that changed since the last call, scrolled
+// rows included, and clears the marks. A row is reported whole even if one
+// cell changed: redrawing whole rows is what keeps double-width glyphs
+// from leaving fragments.
 func (s *Screen) TakeDirty() []int {
-	var rows []int
+	for _, sc := range s.scrolls {
+		for r := sc.Top; r < sc.Bot; r++ {
+			s.dirty[r] = true
+		}
+	}
+	_, rows := s.TakeChanges()
+	return rows
+}
+
+// Scroll is a grid_scroll: the cells of rows [Top, Bot) and columns
+// [Left, Right) moved up by Rows rows, or down when Rows is negative.
+type Scroll struct{ Top, Bot, Left, Right, Rows int }
+
+// TakeChanges is TakeDirty for a painter that keeps what it painted and can
+// move it: it also returns the scrolls since the last call, to apply to the
+// painted image in order before repainting rows. Rows that only moved are
+// not reported. After a change that needs a full repaint there are no
+// scrolls, only every row.
+func (s *Screen) TakeChanges() (scrolls []Scroll, rows []int) {
+	if !s.allDirty {
+		scrolls = s.scrolls
+	}
+	s.scrolls = nil
 	for r := range s.dirty {
 		if s.allDirty || s.dirty[r] {
 			rows = append(rows, r)
@@ -236,7 +260,7 @@ func (s *Screen) TakeDirty() []int {
 		s.dirty[r] = false
 	}
 	s.allDirty = false
-	return rows
+	return scrolls, rows
 }
 
 // MarkAllDirty forces a full redraw.
@@ -413,21 +437,38 @@ func (s *Screen) gridLine(args []any) error {
 	return nil
 }
 
+// gridScroll moves the cells of a region. A row's dirty mark moves with its
+// cells, so that a painter that moves its pixels the same way (see
+// TakeChanges) repaints only the rows that were vacated or changed. A
+// region narrower than the grid leaves the rest of each row in place, so
+// there a row stays dirty if either part was.
 func (s *Screen) gridScroll(top, bot, left, right, rows int) {
 	top, bot = clamp(top, 0, s.Height), clamp(bot, 0, s.Height)
 	left, right = clamp(left, 0, s.Width), clamp(right, 0, s.Width)
+	if rows == 0 || top >= bot || left >= right {
+		return
+	}
+	partial := left > 0 || right < s.Width
+	move := func(r int) {
+		copy(s.cells[r][left:right], s.cells[r+rows][left:right])
+		s.dirty[r] = s.dirty[r+rows] || partial && s.dirty[r]
+	}
 	if rows > 0 {
 		for r := top; r < bot-rows; r++ {
-			copy(s.cells[r][left:right], s.cells[r+rows][left:right])
+			move(r)
 		}
-	} else if rows < 0 {
+		for r := max(top, bot-rows); r < bot; r++ {
+			s.dirty[r] = true
+		}
+	} else {
 		for r := bot - 1; r >= top-rows; r-- {
-			copy(s.cells[r][left:right], s.cells[r+rows][left:right])
+			move(r)
+		}
+		for r := top; r < min(bot, top-rows); r++ {
+			s.dirty[r] = true
 		}
 	}
-	for r := top; r < bot; r++ {
-		s.dirty[r] = true
-	}
+	s.scrolls = append(s.scrolls, Scroll{Top: top, Bot: bot, Left: left, Right: right, Rows: rows})
 }
 
 func clamp(v, lo, hi int) int { return max(lo, min(v, hi)) }
