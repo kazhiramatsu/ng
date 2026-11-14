@@ -1,0 +1,138 @@
+# Follows Shougo/ng in this fork. Every three hours (or by hand) it merges
+# Shougo/ng main into performance, then performance into macos-support,
+# runs ci.yml on the results (as the branches sync/performance and
+# sync/macos-support), and moves the two branches forward only if every
+# job passes. A conflict, a failed test, or a change to Shougo/ng's own
+# workflows (which this workflow's token may not push) fails the run and
+# changes nothing: merge by hand then.
+#
+# Shougo/ng is only fetched; nothing is sent to it.
+name: sync-upstream
+
+on:
+  schedule:
+    - cron: "41 */3 * * *"
+  workflow_dispatch:
+    inputs:
+      test:
+        description: Run ci.yml on the branches even if there is nothing to merge
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # push the merged branches
+  actions: write # start ci.yml on them
+
+concurrency:
+  group: sync-upstream
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      UPSTREAM: https://github.com/Shougo/ng.git
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Merge
+        id: merge
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --no-tags "$UPSTREAM" main
+          up=$(git rev-parse FETCH_HEAD)
+          git fetch --no-tags origin performance macos-support
+          perf_old=$(git rev-parse origin/performance)
+          mac_old=$(git rev-parse origin/macos-support)
+
+          # merge BRANCH START COMMIT MESSAGE: BRANCH at START with COMMIT
+          # merged in, unless it has it already.
+          merge() {
+            git switch -q -C "$1" "$2"
+            git merge-base --is-ancestor "$3" HEAD && return 0
+            if ! git merge --no-ff --no-edit -m "$4" "$3"; then
+              git merge --abort
+              echo "::error::$4: conflict, nothing was changed; merge by hand"
+              exit 1
+            fi
+          }
+          merge performance "$perf_old" "$up" "Merge Shougo/ng main (${up:0:7}) into performance"
+          perf_new=$(git rev-parse HEAD)
+          merge macos-support "$mac_old" "$perf_new" "Merge performance into macos-support"
+          mac_new=$(git rev-parse HEAD)
+
+          if [ -n "$(git diff --name-only "$perf_old" "$perf_new" -- .github/workflows)$(git diff --name-only "$mac_old" "$mac_new" -- .github/workflows)" ]; then
+            echo "::error::Shougo/ng changed .github/workflows, which this workflow's token may not push; nothing was changed, merge by hand"
+            exit 1
+          fi
+
+          {
+            echo "perf_new=$perf_new"
+            echo "mac_new=$mac_new"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$perf_new" = "$perf_old" ] && [ "$mac_new" = "$mac_old" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing to merge." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Merged"
+              echo '```'
+              git log --oneline "$perf_old..$perf_new" --no-merges
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Test with ci.yml
+        if: steps.merge.outputs.changed == 'true' || inputs.test
+        run: |
+          set -euo pipefail
+          git push -f origin performance:refs/heads/sync/performance macos-support:refs/heads/sync/macos-support
+          since=$(date -u -d '-30 seconds' +%Y-%m-%dT%H:%M:%SZ)
+
+          # start BRANCH SHA: starts ci.yml on BRANCH, prints the run's id.
+          start() {
+            gh workflow run ci.yml --ref "$1" > /dev/null
+            for i in $(seq 60); do
+              sleep 5
+              id=$(gh run list --workflow ci.yml --branch "$1" --event workflow_dispatch \
+                --json databaseId,headSha,createdAt \
+                --jq "[.[] | select(.headSha == \"$2\" and .createdAt >= \"$since\")][0].databaseId // empty")
+              if [ -n "$id" ]; then
+                echo "$id"
+                return
+              fi
+            done
+            echo "::error::ci.yml did not start on $1" >&2
+            exit 1
+          }
+          runs="$(start sync/performance "$(git rev-parse performance)") $(start sync/macos-support "$(git rev-parse macos-support)")"
+
+          ok=true
+          for id in $runs; do
+            gh run watch "$id" --exit-status --interval 30 > /dev/null || ok=false
+            gh run view "$id" --json headBranch,conclusion,url \
+              --jq '"ci.yml on \(.headBranch): \(.conclusion) \(.url)"' | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+          if ! $ok; then
+            echo "::error::ci.yml failed on the merged branches; nothing was changed"
+            exit 1
+          fi
+
+      # A plain push: if someone pushed to either branch meanwhile, it is
+      # refused, and the next run merges again.
+      - name: Update the branches
+        if: steps.merge.outputs.changed == 'true'
+        run: |
+          git push --atomic origin \
+            "${{ steps.merge.outputs.perf_new }}:refs/heads/performance" \
+            "${{ steps.merge.outputs.mac_new }}:refs/heads/macos-support"
+
+      - name: Remove the test branches
+        if: always() && (steps.merge.outputs.changed == 'true' || inputs.test)
+        run: git push origin --delete sync/performance sync/macos-support || true
