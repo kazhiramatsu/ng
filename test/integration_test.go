@@ -34,6 +34,10 @@ type harness struct {
 	fonts *font.Set
 	img   *paint.ImagePainter
 
+	// order lists the flushes ("flush") and IdleNotifications ("idle")
+	// as they arrived.
+	order []string
+
 	flushed   chan struct{}
 	uiEntered chan struct{}
 	setSize   chan []any
@@ -102,6 +106,12 @@ func (h *harness) onNotify(method string, params []any) {
 		}
 		return
 	}
+	if method == nvim.IdleNotification {
+		h.mu.Lock()
+		h.order = append(h.order, "idle")
+		h.mu.Unlock()
+		return
+	}
 	if method != "redraw" {
 		return
 	}
@@ -112,6 +122,9 @@ func (h *harness) onNotify(method string, params []any) {
 	flush, err := h.scr.HandleRedraw(params)
 	if err != nil && h.err == nil {
 		h.err = err
+	}
+	if flush {
+		h.order = append(h.order, "flush")
 	}
 	// Answer what Neovim asked the "terminal", as the GUI does, and wake
 	// waitFor when images change even without a flush.
@@ -224,6 +237,41 @@ func TestScrollRepaintHasNoFragments(t *testing.T) {
 	}
 	if !bytes.Equal(h.img.Img.Pix, want.Img.Pix) {
 		t.Error("incremental repaint after scrolling differs from a full repaint")
+	}
+}
+
+// Neovim says it is idle (SafeState, nvim.IdleNotification) right before
+// the flush that ends what a key did, which ng presents at once (package
+// frame). Every other flush must come before it: with 'showcmd' a Normal
+// mode command first flushes the command, then its result.
+func TestIdleComesBeforeTheFinalFlush(t *testing.T) {
+	h := start(t, 40, 6, false)
+	h.input("ione<CR>two<Esc>")
+	h.waitFor("text", func(s *screen.Screen) bool { return row(s, 1) == "two" })
+	steps := []struct {
+		keys string
+		done func(*screen.Screen) bool
+	}{
+		{"k", func(s *screen.Screen) bool { return s.CursorRow == 0 }},
+		{"A", func(s *screen.Screen) bool { return s.ModeName == "insert" }},
+		{"!", func(s *screen.Screen) bool { return row(s, 0) == "one!" }},
+		{"<Esc>:", func(s *screen.Screen) bool { return s.ModeName == "cmdline_normal" }},
+		{"s", func(s *screen.Screen) bool { return strings.HasPrefix(row(s, 5), ":s") }},
+	}
+	for _, st := range steps {
+		time.Sleep(50 * time.Millisecond) // the previous step's notifications
+		h.mu.Lock()
+		h.order = nil
+		h.mu.Unlock()
+		h.input(st.keys)
+		h.waitFor(st.keys, st.done)
+		time.Sleep(100 * time.Millisecond)
+		h.mu.Lock()
+		order := strings.Join(h.order, " ")
+		h.mu.Unlock()
+		if !strings.HasSuffix(order, "idle flush") || strings.Contains(order, "idle flush flush") {
+			t.Errorf("%q: notifications %q, want the last flush right after idle", st.keys, order)
+		}
 	}
 }
 

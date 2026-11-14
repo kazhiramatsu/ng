@@ -44,4 +44,65 @@ flushes (package `frame`: present after 4 ms without a flush, at most
 command line during completion. 2 ms / 8 ms was tried first and still
 flickered; 4 / 16 came from flush intervals measured in traces. Cutting
 the wait for keystrokes only is possible but risks that flicker; not
-done.
+done. Since then ng presents at once when Neovim says it is idle (below).
+
+## Presenting the final flush at once
+
+2026-11-14, Neovim 0.12.6, measured on macOS 26 (Apple M5, ng's macOS port
+with the Metal renderer); nothing here depends on the platform.
+
+Where do the bursts come from? Traces of everyday commands, typed over
+one RPC channel as ng types them (a script writing `nvim_input`
+notifications to `--listen`'s socket), grouped by keystroke:
+
+- **Normal mode:** almost every command flushes twice. With 'showcmd' (on
+  by default) `normal_cmd` shows the key in the corner and calls
+  `ui_flush()` before running the command; the second flush clears it
+  and has the result. The gap is the command's own time: 0.02-0.4 ms for
+  `j` or `w`, 1-3 ms for `<C-d>`, `o` or `<C-w>v`.
+- **Search with 'incsearch':** the typed character with `busy_start`,
+  then the matches 2-4 ms later.
+- **Completion** (`<C-n>`, `<Tab>` on the command line): "-- Searching..."
+  or a blanked command line, then the result 0.1-3 ms later.
+
+So the 4 ms wait mostly waited for flushes that were already there after
+0.2 ms. Neovim triggers SafeState when nothing is pending and it is
+about to wait for input, and its last flush comes right after (it
+flushes before blocking). ng's bootstrap sends `ng_idle` from SafeState
+(`nvim.IdleNotification`), and the flush after it is presented at once
+(package `frame`). In the traces every burst with SafeState ended with
+`idle flush`; there was never a flush after it. SafeState is not
+triggered while completion is active, an operator or a mapping is
+pending, or keys are still queued: there ng waits as before.
+
+Two traps on the way:
+
+- **Test drivers make extra SafeStates.** Keys fed from a Lua timer or
+  with `nvim --remote-send` (a new channel per key) trigger SafeState
+  for the timer or the channel itself, before the key is read, and the
+  showcmd flush then looked final. Only a driver that writes
+  `nvim_input` on one open channel, as ng does, gives the real order.
+- **A stale `ng_idle`.** A timer that changes nothing still sends one,
+  with no flush after it. ng ignores an `ng_idle` that arrived before its
+  last write to Neovim (`rpc.Client.LastWrite`) or more than `MaxDelay`
+  before the flush, so the next keystroke's showcmd flush is not taken
+  for final.
+
+`TestIdleComesBeforeTheFinalFlush` checks the order against Neovim stable
+and nightly every day.
+
+Results (`ng --trace`, the last flush of each burst to its present):
+
+| | before | after |
+| --- | --- | --- |
+| Everyday commands, 120x40, median / p90 (ms) | 5.00 / 5.90 | 0.41 / 1.38 |
+
+With real keystrokes (key events posted to ng's process, 91 keys of
+everyday editing per run, two runs each, 120x40), ng's own summary:
+
+| `--trace` summary, median (p90), ms | before | after |
+| --- | --- | --- |
+| total: key event to present | 5.57 (6.8-7.3) | 1.02 (2.5-2.8) |
+| frame: flush to present | 4.83 (5.1) | 0.25 (0.6) |
+| nvim | 0.43 | 0.44 |
+
