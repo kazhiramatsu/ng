@@ -11,7 +11,7 @@ name: sync-upstream
 
 on:
   schedule:
-    - cron: "41 */3 * * *"
+    - cron: "23 */3 * * *"
   workflow_dispatch:
     inputs:
       test:
