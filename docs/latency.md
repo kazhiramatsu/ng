@@ -108,10 +108,46 @@ everyday editing per run, two runs each, 120x40), ng's own summary:
 | frame: flush to present | 4.83 (5.1) | 0.25 (0.6) |
 | nvim | 0.43 | 0.44 |
 
-The scrolling numbers also include moving the painted rows on the GPU
-instead of repainting them (`paint.Scroll`, `screen.TakeChanges`): one
-line of scrolling repaints one row, not 68. ng's CPU time for the same
-scrolling went from 0.93 to 0.57 s (user).
+The scrolling numbers also include moving the painted rows instead of
+repainting them (`paint.Scroll`, `screen.TakeChanges`): one line of
+scrolling repaints one row, not 68. ng's CPU time for the same scrolling
+went from 0.93 to 0.57 s (user) with this and the faster painting
+together; "Moving rows by renderer" below has the share of moving rows.
+
+## Moving rows by renderer
+
+Moving painted rows copies them through a second texture (SDL cannot
+draw a texture onto itself). Scrolling one line every 8 ms, 216x70 cells
+unless said otherwise, with rows moved or, with that turned off,
+repainted (median flush to present; ng's CPU time, user and system, or
+the frames presented):
+
+| Renderer | moved | repainted |
+| --- | --- | --- |
+| Metal (macOS, Apple M5, 3024x1836 px) | 0.22 ms, 1.02 s | 0.42 ms, 1.14 s |
+| SDL software, macOS, 120x40 cells, 1680x1080 px | 1.74 ms, 2.23 s | 2.08 ms, 2.34 s |
+| SDL software, macOS, 3024x1836 px | 4.86 ms, 5.30 s | 4.65 ms, 5.07 s |
+| SDL software, Linux VM, 1944x1260 px | 10.7 ms, 336 frames | 15.3 ms, 233 frames |
+| OpenGL on llvmpipe, Linux VM | 552 ms, 15 frames | 19 ms, 174 frames |
+| Vulkan on lavapipe, Linux VM | 940 ms, 9 frames | 300 ms, 18 frames |
+
+(800 flushes each; the Linux VM is Ubuntu 26.04 in UTM on the same Mac,
+on Xvfb, where OpenGL and Vulkan are Mesa's CPU implementations, as in
+virtual machines without 3D acceleration. Shougo/ng main presented 88
+frames there on OpenGL, 39 ms late.)
+
+On a GPU, moving halves the time to present. With SDL's own software
+renderer it is about even. With OpenGL or Vulkan running on the CPU the
+two full-window copies, and the render target switches between them,
+cost far more than painting the rows: ng fell behind Neovim and showed
+a frame every half second. ng asks the renderer for its device
+(`ng_renderer_device`: OpenGL's `GL_RENDERER`, the Vulkan device's name)
+and repaints the rows when it is llvmpipe, softpipe or SwiftShader
+(`onCPU` in package gui; the trace says which).
+
+Key event to present on the same Linux VM, real X key events from
+xdotool, 95 keystrokes: median 10.6 to 6.0 ms with the software renderer
+and 7.8 to 3.2 ms with OpenGL on llvmpipe, from Shougo/ng main to this.
 
 ## New characters
 
