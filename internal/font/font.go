@@ -77,55 +77,91 @@ static void ng_fill(FcPattern *font, const char *family, ng_match_t *out) {
 	}
 }
 
-// ng_match finds a font. family may be NULL. When ch is non-zero only a
-// font that contains ch is accepted (used for fallback lookup).
-static int ng_match(const char *family, int bold, int italic, unsigned int ch,
-                    ng_match_t *out) {
+// ng_pattern makes the request for a font of the given families (best
+// first, NULL-terminated; none: any font) in a style, with fontconfig's
+// configuration applied.
+static FcPattern *ng_pattern(const char *const *families, int bold, int italic) {
 	FcPattern *pat = FcPatternCreate();
-	if (family)
-		FcPatternAddString(pat, FC_FAMILY, (const FcChar8 *)family);
+	for (; *families; families++)
+		FcPatternAddString(pat, FC_FAMILY, (const FcChar8 *)*families);
 	FcPatternAddInteger(pat, FC_WEIGHT, bold ? FC_WEIGHT_BOLD : FC_WEIGHT_REGULAR);
 	FcPatternAddInteger(pat, FC_SLANT, italic ? FC_SLANT_ITALIC : FC_SLANT_ROMAN);
 	FcPatternAddInteger(pat, FC_SPACING, FC_MONO);
-	FcCharSet *cs = NULL;
-	if (ch) {
-		cs = FcCharSetCreate();
-		FcCharSetAddChar(cs, ch);
-		FcPatternAddCharSet(pat, FC_CHARSET, cs);
-	}
 	FcConfigSubstitute(NULL, pat, FcMatchPattern);
 	FcDefaultSubstitute(pat);
+	return pat;
+}
 
-	int ok = 0;
+// ng_match finds the font for family.
+static int ng_match(const char *family, int bold, int italic, ng_match_t *out) {
+	const char *families[] = {family, NULL};
+	FcPattern *pat = ng_pattern(families, bold, italic);
 	FcResult res;
-	if (!ch) {
-		FcPattern *m = FcFontMatch(NULL, pat, &res);
-		if (m) {
-			ng_fill(m, family, out);
-			ok = out->path != NULL;
-			FcPatternDestroy(m);
-		}
-	} else {
-		FcFontSet *set = FcFontSort(NULL, pat, FcFalse, NULL, &res);
-		for (int i = 0; set && i < set->nfont && !ok; i++) {
-			FcCharSet *fcs;
-			if (FcPatternGetCharSet(set->fonts[i], FC_CHARSET, 0, &fcs) != FcResultMatch)
-				continue;
-			if (!FcCharSetHasChar(fcs, ch))
-				continue;
-			FcPattern *m = FcFontRenderPrepare(NULL, pat, set->fonts[i]);
-			if (m) {
-				ng_fill(m, family, out);
-				ok = out->path != NULL;
-				FcPatternDestroy(m);
-			}
-		}
-		if (set)
-			FcFontSetDestroy(set);
-		FcCharSetDestroy(cs);
+	FcPattern *m = FcFontMatch(NULL, pat, &res);
+	int ok = 0;
+	if (m) {
+		ng_fill(m, family, out);
+		ok = out->path != NULL;
+		FcPatternDestroy(m);
 	}
 	FcPatternDestroy(pat);
 	return ok;
+}
+
+// ng_fallbacks_t lists every font in the order in which a character
+// missing from the configured fonts looks for one that has it, as Pango
+// does: fontconfig's order for a fallback request in the style, sorted
+// once. Sorting again for each character, with the character in the
+// request, took 2-3 ms per new character with 2,800 fonts installed.
+typedef struct {
+	FcPattern *pat;   // the request
+	FcFontSet *fonts; // in order
+} ng_fallbacks_t;
+
+static ng_fallbacks_t *ng_fallbacks_new(int bold, int italic) {
+	static const char *const any[] = {NULL};
+	FcResult res;
+	FcPattern *pat = ng_pattern(any, bold, italic);
+	FcFontSet *set = FcFontSort(NULL, pat, FcFalse, NULL, &res);
+	ng_fallbacks_t *fb = set ? malloc(sizeof *fb) : NULL;
+	if (!fb) {
+		if (set)
+			FcFontSetDestroy(set);
+		FcPatternDestroy(pat);
+		return NULL;
+	}
+	fb->pat = pat;
+	fb->fonts = set;
+	return fb;
+}
+
+static void ng_fallbacks_free(ng_fallbacks_t *fb) {
+	FcFontSetDestroy(fb->fonts);
+	FcPatternDestroy(fb->pat);
+	free(fb);
+}
+
+// ng_fallback_find returns the index of the first font in fb from start
+// on that has ch, or -1.
+static int ng_fallback_find(ng_fallbacks_t *fb, unsigned int ch, int start) {
+	for (int i = start; i < fb->fonts->nfont; i++) {
+		FcCharSet *cs;
+		if (FcPatternGetCharSet(fb->fonts->fonts[i], FC_CHARSET, 0, &cs) == FcResultMatch &&
+		    FcCharSetHasChar(cs, ch))
+			return i;
+	}
+	return -1;
+}
+
+// ng_fallback_prepare fills out with font i of fb, set up for rendering
+// as the request asks.
+static int ng_fallback_prepare(ng_fallbacks_t *fb, int i, ng_match_t *out) {
+	FcPattern *m = FcFontRenderPrepare(NULL, fb->pat, fb->fonts->fonts[i]);
+	if (!m)
+		return 0;
+	ng_fill(m, NULL, out);
+	FcPatternDestroy(m);
+	return out->path != NULL;
 }
 
 static int ng_ft_load(FT_Face face, unsigned int gi, int flags, int embolden, int oblique) {
@@ -240,9 +276,11 @@ type Set struct {
 	faces   map[faceKey]*face
 	byStyle map[Style][]*face // guifont faces, in order
 	wideBy  map[Style][]*face // guifontwide faces
-	fall    map[fallKey]*face
+	fall    map[fallKey]*face // by character
 	glyphs  map[glyphKey]*Glyph
 	ascii   [Bold | Italic + 1][0x80]*Glyph // one-cell ASCII glyphs, not hashed
+
+	fallbacks [Bold | Italic + 1]*fallbacks // sorted on first use
 
 	// Cell geometry in pixels.
 	CellW, CellH int
@@ -253,6 +291,13 @@ type Set struct {
 type fallKey struct {
 	r     rune
 	style Style
+}
+
+// fallbacks is the fonts a style falls back to, in the order of
+// C.ng_fallbacks_t, with the faces opened from them so far.
+type fallbacks struct {
+	c     *C.ng_fallbacks_t
+	faces map[int]*face // by index in c; nil: unusable
 }
 
 // fcInit initializes fontconfig once. Loading its caches takes a while,
@@ -315,6 +360,12 @@ func (s *Set) Close() {
 		C.FT_Done_Face(f.ft)
 	}
 	s.faces = nil
+	for i, fb := range s.fallbacks {
+		if fb != nil {
+			C.ng_fallbacks_free(fb.c)
+			s.fallbacks[i] = nil
+		}
+	}
 	if s.lib != nil {
 		C.FT_Done_FreeType(s.lib)
 		s.lib = nil
@@ -327,7 +378,7 @@ func (s *Set) Size() float64 { return s.size }
 func (s *Set) facesFor(families []string, style Style, size float64) []*face {
 	var out []*face
 	for _, fam := range families {
-		f, err := s.load(fam, style, 0, size)
+		f, err := s.load(fam, style, size)
 		if err != nil {
 			if style == 0 {
 				s.Warnings = append(s.Warnings, err.Error())
@@ -362,33 +413,70 @@ func (s *Set) wides(style Style) []*face {
 	return fs
 }
 
-// load opens the font fontconfig picks for family (or, with ch != 0 and an
-// empty family, any font containing ch).
-func (s *Set) load(family string, style Style, ch rune, size float64) (*face, error) {
-	var cfam *C.char
-	if family != "" {
-		cfam = C.CString(family)
-		defer C.free(unsafe.Pointer(cfam))
-	}
-	var m C.ng_match_t
-	bold, italic := C.int(0), C.int(0)
+func styleArgs(style Style) (bold, italic C.int) {
 	if style&Bold != 0 {
 		bold = 1
 	}
 	if style&Italic != 0 {
 		italic = 1
 	}
-	if C.ng_match(cfam, bold, italic, C.uint(ch), &m) == 0 {
+	return
+}
+
+// load opens the font fontconfig picks for family.
+func (s *Set) load(family string, style Style, size float64) (*face, error) {
+	var cfam *C.char
+	if family != "" {
+		cfam = C.CString(family)
+		defer C.free(unsafe.Pointer(cfam))
+	}
+	var m C.ng_match_t
+	bold, italic := styleArgs(style)
+	if C.ng_match(cfam, bold, italic, &m) == 0 {
 		return nil, fmt.Errorf("font: no match for %q", family)
 	}
-	path := C.GoString(m.path)
-	C.free(unsafe.Pointer(m.path))
 	// A primary font that fontconfig silently replaced is not what the user
 	// asked for; skip it so the next family in the list is used.
-	if family != "" && ch == 0 && m.family_ok == 0 && family != "monospace" {
+	if family != "" && m.family_ok == 0 && family != "monospace" {
+		C.free(unsafe.Pointer(m.path))
 		return nil, fmt.Errorf("font: %q not found", family)
 	}
+	return s.open(m, style, size)
+}
 
+// fallback returns the font for r in style when no configured font has
+// it, or nil: the first font that has r in the order of C.ng_fallbacks_t.
+func (s *Set) fallback(r rune, style Style) *face {
+	fb := s.fallbacks[style]
+	if fb == nil {
+		c := C.ng_fallbacks_new(styleArgs(style))
+		if c == nil {
+			return nil
+		}
+		fb = &fallbacks{c: c, faces: map[int]*face{}}
+		s.fallbacks[style] = fb
+	}
+	for i := C.ng_fallback_find(fb.c, C.uint(r), 0); i >= 0; i = C.ng_fallback_find(fb.c, C.uint(r), i+1) {
+		f, ok := fb.faces[int(i)]
+		if !ok {
+			var m C.ng_match_t
+			if C.ng_fallback_prepare(fb.c, i, &m) != 0 {
+				f, _ = s.open(m, style, s.size)
+			}
+			fb.faces[int(i)] = f
+		}
+		if f != nil {
+			return f
+		}
+	}
+	return nil
+}
+
+// open opens the face fontconfig matched, or returns the one opened
+// before. It frees m.path.
+func (s *Set) open(m C.ng_match_t, style Style, size float64) (*face, error) {
+	path := C.GoString(m.path)
+	C.free(unsafe.Pointer(m.path))
 	key := faceKey{path, int(m.index), style, size}
 	if f, ok := s.faces[key]; ok {
 		return f, nil
@@ -506,14 +594,11 @@ func (s *Set) faceFor(r rune, style Style, cells int) (f *face, primary bool) {
 		}
 	}
 	k := fallKey{r, style}
-	if f, ok := s.fall[k]; ok {
-		return f, false
+	f, ok := s.fall[k]
+	if !ok {
+		f = s.fallback(r, style)
+		s.fall[k] = f
 	}
-	f, err := s.load("", style, r, s.size)
-	if err != nil {
-		f = nil
-	}
-	s.fall[k] = f
 	return f, false
 }
 

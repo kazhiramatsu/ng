@@ -113,3 +113,24 @@ instead of repainting them (`paint.Scroll`, `screen.TakeChanges`): one
 line of scrolling repaints one row, not 68. ng's CPU time for the same
 scrolling went from 0.93 to 0.57 s (user).
 
+## New characters
+
+Scrolling a file of distinct kanji (100 new characters a line) froze ng:
+44 s of CPU for 300 lines, and no frame between the first one and the
+end. Each character missing from 'guifont' was looked up with
+`FcFontSort`, which scores and sorts every installed font: 2.5 ms per
+character with the 2,800 fonts of the Mac above. A screen of Japanese
+text has hundreds of characters ng has not drawn yet.
+
+ng now sorts once per style and walks that list for each new character
+(package font, `ng_fallbacks_t`):
+
+| | before | after |
+| --- | --- | --- |
+| `BenchmarkNewCJKGlyphs` (lookup and rasterizing) | 2.52 ms | 19.7 µs |
+| First screen of 6,700 distinct kanji, 216x70 | 14.3 s | 0.45 s |
+| Scrolling those 300 lines at 120 Hz, CPU | 44 s | 2.1 s user |
+
+While scrolling, ng now waits for Neovim 61% of the time; uploading the
+new glyphs to the atlas (one `SDL_UpdateTexture` each) and rasterizing
+them take most of the rest.
