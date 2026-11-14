@@ -194,6 +194,9 @@ type Glyph struct {
 	// Font icon), shrunk to fit; Spill has it at its own size over two
 	// cells.
 	Wide bool
+	// ID numbers the glyphs of a Set from 0, for keeping data about each
+	// glyph in a slice rather than a map (the GUI's place in its atlas).
+	ID int
 }
 
 // Empty reports whether the glyph has no pixels (for example a space).
@@ -239,6 +242,7 @@ type Set struct {
 	wideBy  map[Style][]*face // guifontwide faces
 	fall    map[fallKey]*face
 	glyphs  map[glyphKey]*Glyph
+	ascii   [Bold | Italic + 1][0x80]*Glyph // one-cell ASCII glyphs, not hashed
 
 	// Cell geometry in pixels.
 	CellW, CellH int
@@ -517,6 +521,16 @@ func (s *Set) faceFor(r rune, style Style, cells int) (f *face, primary bool) {
 // content of one grid cell: a base character optionally followed by
 // combining characters. The result is cached.
 func (s *Set) Glyph(text string, style Style, cells int) *Glyph {
+	// Painting asks for every cell: most are ASCII, found without
+	// hashing the text.
+	if len(text) == 1 && text[0] < 0x80 && cells == 1 && style <= Bold|Italic {
+		g := s.ascii[style][text[0]]
+		if g == nil {
+			g = s.cached(glyphKey{text, style, cells, false})
+			s.ascii[style][text[0]] = g
+		}
+		return g
+	}
 	return s.cached(glyphKey{text, style, cells, false})
 }
 
@@ -535,6 +549,7 @@ func (s *Set) cached(k glyphKey) *Glyph {
 		return g
 	}
 	g := s.render(k.text, k.style, k.cells, k.spill)
+	g.ID = len(s.glyphs)
 	s.glyphs[k] = g
 	return g
 }

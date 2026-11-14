@@ -55,8 +55,10 @@ func Row(p Painter, s *screen.Screen, f *font.Set, row int) {
 		a := s.Attr(c.HL)
 		fg, _, _ := s.Colors(c.HL)
 		x := col * f.CellW
-		if g := glyph(s, f, row, col, w, styleOf(a)); !g.Empty() {
-			p.DrawGlyph(g, x+g.X, y+g.Y, fg)
+		if c.Text != " " { // most cells; a blank has no glyph
+			if g := glyph(s, f, row, col, w, styleOf(a)); !g.Empty() {
+				p.DrawGlyph(g, x+g.X, y+g.Y, fg)
+			}
 		}
 		decorate(p, f, a, x, y, w*f.CellW, fg)
 	}
