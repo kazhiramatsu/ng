@@ -26,6 +26,7 @@ char *ng_drop_data(const SDL_Event *e);
 char *ng_event_text(const SDL_Event *e);
 bool ng_set_text_input_area(SDL_Window *w, int x, int y, int width, int height, int cursor);
 bool ng_init(void);
+void ng_set_option_as_alt(bool on);
 void ng_wake(void);
 Uint32 ng_get_wake_type(void);
 int ng_wait(SDL_Event *e);

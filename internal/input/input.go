@@ -3,7 +3,10 @@
 // first, which keeps this logic testable.
 package input
 
-import "strings"
+import (
+	"math"
+	"strings"
+)
 
 // Key identifies a non-text key.
 type Key int
@@ -136,6 +139,24 @@ func Text(s string) string {
 	return strings.ReplaceAll(s, "<", "<lt>")
 }
 
+// Wheel adds up scrolling into whole steps of a mouse wheel, Neovim's unit
+// of scrolling. A touchpad scrolls in fractions of a step (SDL makes ten
+// pixels of a macOS touchpad one step).
+type Wheel struct{ acc float64 }
+
+// Add adds v steps and returns the whole steps to send now, negative in the
+// other direction. What is left over counts towards the next call.
+func (w *Wheel) Add(v float32) int {
+	w.acc += float64(v)
+	// Ten float32 steps of 0.1 do not add up to exactly 1.
+	if r := math.Round(w.acc); math.Abs(w.acc-r) < 1e-3 {
+		w.acc = r
+	}
+	n := int(w.acc)
+	w.acc -= float64(n)
+	return n
+}
+
 // MouseModifier returns the modifier string for nvim_input_mouse.
 func MouseModifier(m Mod) string {
 	var b strings.Builder
@@ -155,6 +176,42 @@ func MouseModifier(m Mod) string {
 // clipboard as in terminal emulators. ch is the unshifted character.
 func IsPaste(ch rune, m Mod) bool {
 	return (ch == 'v' || ch == 'V') && m&(ModCtrl|ModShift|ModAlt|ModSuper) == ModCtrl|ModShift
+}
+
+// IsMacPaste reports whether the key is Cmd+V, which pastes the clipboard
+// in macOS terminal emulators. ch is the unshifted character.
+func IsMacPaste(ch rune, m Mod) bool {
+	return (ch == 'v' || ch == 'V') && m&(ModCtrl|ModShift|ModAlt|ModSuper) == ModSuper
+}
+
+// MacOption returns the modifiers of a printable key on macOS, where Option
+// (Alt) types characters, as AltGr does elsewhere: "@", "[" or "\" on many
+// layouts. Alone or with Shift it is therefore not Alt, and the key types
+// what the layout gives it. With meta (g:ng_macmeta, like MacVim's
+// 'macmeta') Option is Alt and the key is a <M-...> chord. With Ctrl or Cmd
+// the key is a chord anyway and Option stays Alt.
+func MacOption(m Mod, meta bool) Mod {
+	if meta || m&(ModCtrl|ModSuper) != 0 {
+		return m
+	}
+	return m &^ ModAlt
+}
+
+// MacMenuKey reports whether a key is a shortcut of the application menu
+// that SDL creates on macOS: Cmd+Q (Quit), Cmd+W (Close), Cmd+H and
+// Cmd+Option+H (Hide), Cmd+M (Minimize) and Ctrl+Cmd+F (Full Screen). The
+// menu acts on it, so it is not also sent to Neovim. ch is the unshifted
+// character.
+func MacMenuKey(ch rune, m Mod) bool {
+	switch m & (ModShift | ModCtrl | ModAlt | ModSuper) {
+	case ModSuper:
+		return ch == 'q' || ch == 'w' || ch == 'h' || ch == 'm'
+	case ModSuper | ModAlt:
+		return ch == 'h'
+	case ModSuper | ModCtrl:
+		return ch == 'f'
+	}
+	return false
 }
 
 // IMEWanted reports whether the input method should be active in a Neovim

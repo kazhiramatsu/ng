@@ -3,6 +3,14 @@
 #include <string.h>
 #include "sdl.h"
 
+// The modifiers that change the character a key types: Shift, CapsLock and
+// AltGr, and on macOS Option, which types characters such as "@" or "\" on
+// many layouts (whether it does in ng is decided by input.MacOption).
+#ifdef SDL_PLATFORM_MACOS
+#define NG_TYPING_MODS (SDL_KMOD_SHIFT | SDL_KMOD_CAPS | SDL_KMOD_MODE | SDL_KMOD_ALT)
+#else
+#define NG_TYPING_MODS (SDL_KMOD_SHIFT | SDL_KMOD_CAPS | SDL_KMOD_MODE)
+#endif
 
 
 void ng_flatten(const SDL_Event *e, ng_event *o) {
@@ -19,8 +27,7 @@ void ng_flatten(const SDL_Event *e, ng_event *o) {
 		// e->key.key does not include Shift (Shift+; is ';'). Ask the
 		// keyboard layout what the key types with the modifiers that
 		// change characters.
-		o->typed = SDL_GetKeyFromScancode(e->key.scancode,
-			e->key.mod & (SDL_KMOD_SHIFT | SDL_KMOD_CAPS | SDL_KMOD_MODE), false);
+		o->typed = SDL_GetKeyFromScancode(e->key.scancode, e->key.mod & NG_TYPING_MODS, false);
 		o->repeat = e->key.repeat;
 		o->keyboard = e->key.which;
 		o->scancode = (int)e->key.scancode;
@@ -41,12 +48,13 @@ void ng_flatten(const SDL_Event *e, ng_event *o) {
 		o->state = e->motion.state;
 		break;
 	case SDL_EVENT_MOUSE_WHEEL:
+		// In scroll steps, fractions of one from a touchpad. The values
+		// follow the system's scrolling direction ("natural scrolling",
+		// the default on macOS), like every other window, so
+		// SDL_MOUSEWHEEL_FLIPPED is not undone: it only says that they
+		// are opposite to the fingers' physical motion.
 		o->x = e->wheel.x;
 		o->y = e->wheel.y;
-		if (e->wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
-			o->x = -o->x;
-			o->y = -o->y;
-		}
 		break;
 	}
 }
@@ -88,6 +96,12 @@ bool ng_init(void) {
 #ifdef __linux__
 	SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "wayland,x11");
 #endif
+#ifdef SDL_PLATFORM_MACOS
+	// Holding a key repeats it, as in a terminal, instead of opening the
+	// accents menu wherever text input is on (Insert mode, the command
+	// line, and every mode with g:ng_ime_insert_only = 0).
+	SDL_SetHint(SDL_HINT_MAC_PRESS_AND_HOLD, "0");
+#endif
 	// ng draws the preedit text itself, in the grid with its own CJK
 	// rendering; the input method still draws its candidate window.
 	SDL_SetHint(SDL_HINT_IME_IMPLEMENTED_UI, "composition");
@@ -95,6 +109,14 @@ bool ng_init(void) {
 		return false;
 	ng_wake_type = SDL_RegisterEvents(1);
 	return ng_wake_type != 0;
+}
+
+// ng_set_option_as_alt makes both Option keys Alt (g:ng_macmeta): with text
+// input on, Option then no longer starts a composition such as Option+E
+// (an accent), whose key event the input method would take. A no-op
+// outside macOS.
+void ng_set_option_as_alt(bool on) {
+	SDL_SetHint(SDL_HINT_MAC_OPTION_AS_ALT, on ? "both" : "none");
 }
 
 // ng_wake may be called from any thread.

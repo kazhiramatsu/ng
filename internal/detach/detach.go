@@ -65,6 +65,8 @@ func FromTerminal() bool {
 	return false
 }
 
+// isTerminal reports whether fd is a terminal: whether it has terminal
+// attributes.
 func isTerminal(fd int) bool {
 	var t syscall.Termios
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), ioctlGetTermios, uintptr(unsafe.Pointer(&t)))
@@ -119,8 +121,9 @@ func run(cmd *exec.Cmd, stderr io.Writer) int {
 		return 0
 	case <-time.After(readyWait):
 		// Still running with stderr closed: the window is up. The child
-		// is in its own session and outlives this process.
-		cmd.Process.Release()
+		// is in its own session and outlives this process. (No
+		// cmd.Process.Release: the goroutine above is in cmd.Wait, which
+		// Release would race with where Go has no pidfd, as on macOS.)
 		return 0
 	}
 }

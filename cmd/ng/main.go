@@ -1,4 +1,4 @@
-// Command ng is a minimal Neovim GUI for Linux.
+// Command ng is a minimal Neovim GUI for Linux and macOS.
 //
 //	ng [-f] [--nvim PATH] [--geometry COLSxROWS] [--] [nvim arguments...]
 //	ng [-f] --server [ADDRESS]

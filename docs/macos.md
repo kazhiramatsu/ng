@@ -1,0 +1,227 @@
+# macOS
+
+2026-11-14. macOS 26.5 on Apple silicon (ANSI keyboard, Japanese locale),
+SDL 3.4.20, FreeType, fontconfig and Neovim 0.12.6 from Homebrew.
+
+## Building
+
+Only `internal/detach` did not compile: `syscall.Dup3` and `TCGETS` are
+Linux's (macOS has `Dup2` and `TIOCGETA`). Once built, SDL_Init failed:
+`SDL_HINT_VIDEO_DRIVER` "wayland,x11" names no driver macOS has (its
+driver is "cocoa"), so the hint is now set on Linux only. Shougo/ng has
+since made both changes itself (5e82bb9), so that macOS forks can follow
+it with fewer conflicts.
+
+## The default font
+
+With 'guifont' empty, "monospace" was Hiragino Maru Gothic, a font with
+proportional Latin letters: `Hello` came out spread over wide cells.
+fontconfig's own aliases for monospace list only fonts found on Linux,
+and with fontconfig 2.17.1 under a Japanese locale its language criterion
+outranked those (weak) aliases:
+
+```sh
+fc-match monospace                    # ヒラギノ丸ゴ ProN W4.ttc (LANG=ja_JP.UTF-8)
+LANG=en_US.UTF-8 fc-match monospace   # Andale Mono.ttf
+```
+
+fontconfig 2.18 matches generic families on their own (`genericfamily`,
+`48-guessfamily.conf`): there "monospace" is Andale Mono under any
+locale. That is a monospace font, but not the one of macOS applications,
+and "SF Mono" (below) is still not found.
+
+Neovim 0.12 sets 'guifont' on macOS itself, to "SF Mono,Menlo,Monaco,
+Courier New,monospace", and ng then warned `font: "SF Mono" not found` at
+every start. macOS installs SF Mono as the hidden system font
+".SF NS Mono", which CoreText finds as "SF Mono" and fontconfig does not:
+
+```sh
+nvim --clean --headless -c 'lua io.stdout:write(vim.o.guifont)' -c q
+fc-list | grep SFNSMono               # .SF NS Mono, with Bold and Italic instances
+```
+
+On macOS ng now looks for "monospace" as Menlo and "SF Mono" as
+".SF NS Mono" (`ng_alias` in package font), after the name itself, so a
+font installed under that name still wins. FreeType renders the hidden
+font's named instances (Regular, Bold, Italic) as real faces.
+
+Sizes: macOS applications take a point as one unit of window coordinates
+(72 dpi), not GTK's 96, so ng does too there. Menlo 11 is then as large
+as in MacVim and Terminal.
+
+## The window opened behind the terminal
+
+Started from iTerm2, ng's window appeared but iTerm2 stayed the active
+application, and typing went to the terminal. Since macOS 14, SDL no
+longer activates the application at startup
+(`SDL_HINT_MAC_BACKGROUND_APP` defaults to on there, see
+`src/video/cocoa/SDL_cocoaevents.m`), and another process cannot do it:
+`NSRunningApplication.activate` returned true and changed nothing
+(cooperative activation). ng calls SDL_RaiseWindow when it first shows
+its window, on macOS only: on GNOME Wayland a raise nobody asked for
+becomes an "is ready" notification.
+
+## Keys typed right after Esc were sent twice
+
+`<Esc>0r` and Option+A, arriving together after a stall, gave
+`råbcå€` instead of `åbcå€`. Cocoa interprets every pending key in one
+SDL_PumpEvents, while text input is still on, so each key after `<Esc>`
+made both a key event and a text input event. ng turns text input off at
+`<Esc>` and makes the text from the key event (`input.DirectText`), and
+then sent the text input event as well. Stopping ng while the keys are
+posted reproduces it every time (`keys` is the helper at the end):
+
+```sh
+kill -STOP $PID; keys $PID 53 29 15 0+alt; kill -CONT $PID
+```
+
+ng now drops text input events that arrive while its text input is off.
+This can happen on Linux too, whenever ng is busy while keys are typed
+(`<Esc>dd` deleting two lines).
+
+## Option and Cmd
+
+- SDL's key event for Option+L is `l` with Alt. The character the layout
+  gives it ("¬" on US, "@" on German) is in SDL's keymap under
+  `SDL_KMOD_ALT` on macOS. Taking Option as Alt made such characters
+  impossible to type, including "\" (Option+¥) on Japanese keyboards. ng
+  takes Option as AltGr for printable keys (`input.MacOption`).
+- With text input on, Option+E (an accent) never reaches ng as a key
+  event: the input method takes it. `g:ng_macmeta` therefore also sets
+  `SDL_HINT_MAC_OPTION_AS_ALT`.
+- SDL's application menu acts on Cmd+Q, Cmd+W, Cmd+H, Cmd+M and
+  Ctrl+Cmd+F, but SDL still sends their key events; ng drops them so that
+  Neovim does not also get `<D-q>`.
+- An unmapped `<D-s>` in Insert mode inserts the text `<D-s>`. That is
+  Neovim's doing:
+
+  ```sh
+  nvim --clean --headless -c 'call feedkeys("i\<D-s>x\<Esc>", "xt")' \
+      -c 'lua io.stdout:write(vim.fn.getline(1))' -c 'qa!'   # <D-s>x
+  ```
+
+## Trackpad
+
+SDL makes ten points of trackpad movement one wheel step (`y` is
+`scrollingDeltaY * 0.1`, `Cocoa_HandleMouseWheel`). ng sent one wheel
+event per SDL event whatever its size, three lines for each small
+movement. It now adds the steps up (`input.Wheel`): 20 events of 3 pixels
+scroll 18 lines. ng also reversed the values of `SDL_MOUSEWHEEL_FLIPPED`
+events, which undid "natural scrolling", the macOS default (and under
+Wayland the same setting): the values already follow it.
+
+## Latency
+
+`ng --trace` while typing: median 5.8 ms from key event to present (frame
+5.0 ms, mostly the 4 ms quiet wait). A first measurement said 20 to 30
+ms: the frame dump below was still in `present`. Presenting the final
+flush at once (docs/latency.md) then took the key event to present from
+a median of 5.6 ms to 1.0 ms (frame 4.8 to 0.25 ms) with keys posted to
+ng.
+
+## Tests
+
+- `TestSurvivesGUIKill` failed now and then: its socket path under
+  `t.TempDir()` in `$TMPDIR` (`/var/folders/...`) was 105 bytes, and a
+  Unix socket path must fit in 104 on macOS, so Neovim could not listen.
+  Shougo/ng now uses a short directory there (5e82bb9). ng also looks
+  for the servers it left behind in `$TMPDIR`, where it puts its sockets
+  on macOS, so the test points `$TMPDIR` at that directory too: the
+  sockets of an ng in use do not count.
+- `go test -race ./internal/detach` failed: `Process.Release` raced with
+  `cmd.Wait` in another goroutine. Linux waits through a pidfd, where the
+  race detector sees nothing.
+- Font tests that ask for the fonts CI installs on Linux skipped on macOS
+  (`TestGVimSyntaxAndWideSize` needs Courier 10 Pitch and IPAGothic). They
+  now fall back to Menlo and Hiragino Sans (`installed` in
+  `font_test.go`).
+- `TestMacFamilies` checks the aliases above. The worst case needed a
+  Japanese locale, and fontconfig reads the language once per process, so
+  `TestMacFamiliesJapanese` runs it again with `FC_LANG=ja` (CI runs in
+  English). Without `ng_alias` both fail: "monospace" is Andale Mono, or
+  Hiragino Maru Gothic in the Japanese process with fontconfig 2.17, and
+  "SF Mono" is not found.
+
+  ```sh
+  FC_LANG=ja fc-match monospace   # 2.17.1: ヒラギノ丸ゴ Pro, 2.18.3: Andale Mono
+  ```
+
+- `TestIsTerminal` needs a terminal's own end of a pseudo-terminal: on
+  macOS the master end of `/dev/ptmx` has no terminal attributes
+  (`TIOCGETA` fails there, while Linux answers `TCGETS` on it). The
+  helpers in `pty_*_test.go` open the other end with each system's
+  ioctls. With Linux's `TCGETS` value in `sys_darwin.go` the test fails.
+- The Nerd Font tests pass on macOS with UDEV Gothic NF. To run them
+  without installing the font, give fontconfig a configuration that adds
+  its directory:
+
+  ```xml
+  <fontconfig>
+    <include ignore_missing="no">/opt/homebrew/etc/fonts/fonts.conf</include>
+    <dir>/path/to/UDEVGothic_NF_v2.2.0</dir>
+  </fontconfig>
+  ```
+
+  ```sh
+  FONTCONFIG_FILE=/path/to/fonts.conf go test -run TestWideSymbol ./internal/font/ ./internal/paint/
+  ```
+
+- After `brew upgrade` had replaced fontconfig 2.17.1 with 2.18.3, the
+  tests did not link: `ld: library 'fontconfig' not found`, with
+  `-L/opt/homebrew/Cellar/fontconfig/2.17.1/lib`. Homebrew's
+  `fontconfig.pc` names the versioned Cellar directory, and Go's build
+  cache does not include pkg-config's output in its key
+  (`buildActionID` in `cmd/go/internal/work/exec.go` hashes only the
+  `#cgo` flags), so packages built before the upgrade kept the old path.
+  `go clean -cache` fixes it. A test package whose own files changed is
+  rebuilt and links; the packages that import it from the cache do not.
+- `go test -race` prints `ld: warning: ... malformed LC_DYSYMTAB` with
+  the current Xcode linker. It is only a warning.
+
+## Testing without hands
+
+- Key events posted to ng's process (CGEvent `postToPid`; the terminal
+  needs the Accessibility permission) reach SDL only while ng is the
+  active application: SDL drops keys when no window has keyboard focus.
+  Start a new ng, which raises itself, rather than activating one.
+- Scroll events posted to a process have no window and are dropped. Post
+  them through the session event tap, with ng active and the pointer
+  over its window.
+- `screencapture -l` failed for ng's window ("could not create image from
+  window"); a temporary dump of `SDL_RenderReadPixels` before
+  `SDL_RenderPresent` showed the frames instead.
+- `TISSelectInputSource` switches to
+  `com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese` and back to
+  `com.apple.keylayout.ABC`, to test the input method. Select it before
+  starting ng: an ng started with ABC selected, then switched to Kotoeri
+  while it ran, received the posted keys as plain ASCII (twice), while an
+  ng started with Kotoeri selected composed and converted them.
+
+The key helper (`swiftc -O -o keys keys.swift`), used as
+`keys PID 5+shift 31 0+alt 53` for `G`, `o`, Option+A and Esc. Arguments
+are macOS virtual key codes with modifiers:
+
+```swift
+import CoreGraphics
+import Foundation
+
+let pid = pid_t(CommandLine.arguments[1])!
+let mods: [String: (CGKeyCode, CGEventFlags)] = [
+    "shift": (56, .maskShift), "ctrl": (59, .maskControl),
+    "alt": (58, .maskAlternate), "cmd": (55, .maskCommand),
+]
+func post(_ key: CGKeyCode, _ down: Bool, _ flags: CGEventFlags) {
+    let e = CGEvent(keyboardEventSource: nil, virtualKey: key, keyDown: down)!
+    e.flags = flags
+    e.postToPid(pid)
+    usleep(15000)
+}
+for spec in CommandLine.arguments.dropFirst(2) {
+    let parts = spec.split(separator: "+").map(String.init)
+    var flags: CGEventFlags = []
+    for m in parts.dropFirst() { flags.insert(mods[m]!.1); post(mods[m]!.0, true, flags) }
+    post(CGKeyCode(parts[0])!, true, flags)
+    post(CGKeyCode(parts[0])!, false, flags)
+    for m in parts.dropFirst().reversed() { flags.remove(mods[m]!.1); post(mods[m]!.0, false, flags) }
+}
+```

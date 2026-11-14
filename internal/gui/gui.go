@@ -1,6 +1,6 @@
 // Package gui is ng's window: SDL3 for the window, input and drawing (with
-// SDL_Renderer, so it runs on OpenGL, Vulkan or SDL's software renderer
-// under xrdp), and the paint package for what to draw.
+// SDL_Renderer, so it runs on OpenGL, Vulkan, Metal or SDL's software
+// renderer under xrdp), and the paint package for what to draw.
 package gui
 
 /*
@@ -14,6 +14,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -34,6 +35,10 @@ import (
 )
 
 const atlasSize = 2048
+
+// macOS selects the conventions of macOS where they differ from Linux:
+// font sizes, the Option and Cmd keys.
+const macOS = runtime.GOOS == "darwin"
 
 // bootstrap runs in Neovim before the UI attaches. ng installs nothing on
 // the runtimepath; everything it needs is sent here.
@@ -96,9 +101,12 @@ type App struct {
 	gridCols     int // grid size that fits the window
 	gridRows     int
 	suppressText bool
+	optionAsAlt  bool // SDL makes Option Alt (macOS, g:ng_macmeta)
 	mouseButton  string
 	mouseRow     int
 	mouseCol     int
+	wheelX       input.Wheel
+	wheelY       input.Wheel
 
 	trace      io.Writer
 	traceStart time.Time
@@ -293,6 +301,7 @@ func (a *App) restartSession() {
 	a.vars = map[string]any{} // the bootstrap reports them again
 	a.scr.ResetGraphics()     // the old server's images are gone with it
 	a.updateTextInput()
+	a.updateOptionAsAlt()
 	a.tracef(time.Now(), "restart attach to %s", r.Addr)
 	connect := func(onNotify rpc.NotificationHandler) (*nvim.Nvim, error) {
 		return nvim.Connect(r.Addr, onNotify, nil)
@@ -501,6 +510,7 @@ func (a *App) processRedraws() (drawn, closed bool, err error) {
 				a.vars[b.varName] = b.varVal
 			}
 			a.updateTextInput()
+			a.updateOptionAsAlt()
 			continue
 		}
 		if b.setSize != nil {
@@ -614,10 +624,17 @@ func (a *App) errorMessage(msg string) {
 	a.nv.Notify("nvim_echo", []any{[]any{"ng: " + msg, "ErrorMsg"}}, true, map[string]any{})
 }
 
+// dpi converts 'guifont' sizes to pixels. Points are 1/96 inch, as in GTK,
+// so that sizes match GVim's. On macOS every application (MacVim, Terminal)
+// takes a point as one unit of window coordinates, 1/72 inch, and so does
+// ng there.
 func (a *App) dpi() float64 {
 	s := float64(C.SDL_GetWindowDisplayScale(a.win))
 	if s <= 0 {
 		s = 1
+	}
+	if macOS {
+		return 72 * s
 	}
 	return 96 * s
 }
@@ -734,6 +751,12 @@ func (a *App) show() {
 	}
 	a.resizeWindowToGrid(a.scr.Width, a.scr.Height)
 	C.SDL_ShowWindow(a.win)
+	if macOS {
+		// Take the keyboard, as a new window does under a Linux window
+		// manager. macOS 14 and later leave a program started from a
+		// terminal behind the terminal, where typing would not reach it.
+		C.SDL_RaiseWindow(a.win)
+	}
 	a.shown = true
 	// The window manager answers the size request with one or more size
 	// changes (on sway: first the requested size, then the tile). The
@@ -888,15 +911,32 @@ func (a *App) busyHidesCursor(now time.Time) bool {
 	return a.scr.Busy && !a.busySince.IsZero() && now.Sub(a.busySince) >= busyDelay
 }
 
-// imeInsertOnly is g:ng_ime_insert_only, true unless set to 0 or false.
-func (a *App) imeInsertOnly() bool {
-	switch v := a.vars["ng_ime_insert_only"].(type) {
+// boolVar returns the g:ng_* variable name as a boolean (0 and v:false are
+// false), or def when it is not set.
+func (a *App) boolVar(name string, def bool) bool {
+	switch v := a.vars[name].(type) {
 	case int64:
 		return v != 0
 	case bool:
 		return v
 	}
-	return true
+	return def
+}
+
+// imeInsertOnly is g:ng_ime_insert_only, true unless set to 0 or false.
+func (a *App) imeInsertOnly() bool { return a.boolVar("ng_ime_insert_only", true) }
+
+// macMeta is g:ng_macmeta: on macOS the Option keys are Alt (Meta) rather
+// than typing characters, like MacVim's 'macmeta'. Off unless set.
+func (a *App) macMeta() bool { return a.boolVar("ng_macmeta", false) }
+
+// updateOptionAsAlt keeps SDL's treatment of the Option keys in line with
+// g:ng_macmeta (see input.MacOption for ng's own).
+func (a *App) updateOptionAsAlt() {
+	if want := macOS && a.macMeta(); want != a.optionAsAlt {
+		C.ng_set_option_as_alt(C.bool(want))
+		a.optionAsAlt = want
+	}
 }
 
 // updateTextInput turns SDL text input, and with it the input method, on
@@ -1079,6 +1119,12 @@ func (a *App) handle(e event) bool {
 	case C.SDL_EVENT_TEXT_INPUT:
 		wasComposing := a.preedit.Text != ""
 		a.preedit = paint.Preedit{}
+		if !a.textInput {
+			// SDL made the text before ng turned text input off at <Esc>:
+			// keys typed right after it, in the same batch of events. Their
+			// key events have sent the text already (input.DirectText).
+			return wasComposing
+		}
 		if a.suppressText && !wasComposing {
 			a.suppressText = false
 			return false
@@ -1178,11 +1224,19 @@ func (a *App) keyDown(e event) {
 		}
 		return
 	}
+	if macOS && e.key < C.SDLK_SCANCODE_MASK {
+		if input.MacMenuKey(rune(e.key), m) {
+			a.suppressText = true // the application menu acts on it
+			return
+		}
+		m = input.MacOption(m, a.macMeta())
+	}
 	if e.key == '[' && m&input.ModCtrl != 0 {
 		defer a.leavingTextMode()
 	}
-	// Ctrl+Shift+V pastes the clipboard, as in terminal emulators.
-	if e.key < C.SDLK_SCANCODE_MASK && input.IsPaste(rune(e.key), m) {
+	// Ctrl+Shift+V (Cmd+V on macOS) pastes the clipboard, as in terminal
+	// emulators.
+	if e.key < C.SDLK_SCANCODE_MASK && isPaste(rune(e.key), m) {
 		a.paste()
 		a.suppressText = true
 		return
@@ -1201,6 +1255,15 @@ func (a *App) keyDown(e event) {
 	if !a.textInput {
 		a.nv.Input(input.DirectText(rune(e.typed), m))
 	}
+}
+
+// isPaste reports whether the key pastes the clipboard: Ctrl+Shift+V, or
+// Cmd+V on macOS.
+func isPaste(ch rune, m input.Mod) bool {
+	if macOS {
+		return input.IsMacPaste(ch, m)
+	}
+	return input.IsPaste(ch, m)
 }
 
 // leavingTextMode turns the input method off as soon as a key that leaves
@@ -1268,19 +1331,18 @@ func (a *App) mouse(e event) {
 			a.nv.InputMouse(a.mouseButton, "drag", mod, row, col)
 		}
 	case C.SDL_EVENT_MOUSE_WHEEL:
+		// One wheel event per whole step (see input.Wheel).
 		row, col := a.mouseRow, a.mouseCol
-		switch {
-		case e.y > 0:
-			a.nv.InputMouse("wheel", "up", mod, row, col)
-		case e.y < 0:
-			a.nv.InputMouse("wheel", "down", mod, row, col)
+		wheel := func(n int, pos, neg string) {
+			for ; n > 0; n-- {
+				a.nv.InputMouse("wheel", pos, mod, row, col)
+			}
+			for ; n < 0; n++ {
+				a.nv.InputMouse("wheel", neg, mod, row, col)
+			}
 		}
-		switch {
-		case e.x > 0:
-			a.nv.InputMouse("wheel", "right", mod, row, col)
-		case e.x < 0:
-			a.nv.InputMouse("wheel", "left", mod, row, col)
-		}
+		wheel(a.wheelY.Add(e.y), "up", "down")
+		wheel(a.wheelX.Add(e.x), "right", "left")
 	}
 }
 

@@ -30,6 +30,31 @@ func child(mode string) *exec.Cmd {
 	return cmd
 }
 
+// isTerminal tells a terminal from what is not one, whatever the system
+// calls the request for a terminal's attributes (TCGETS on Linux, TIOCGETA
+// on macOS).
+func TestIsTerminal(t *testing.T) {
+	if tty := openTerminal(t); !isTerminal(int(tty.Fd())) {
+		t.Error("a pseudo-terminal is not taken for a terminal")
+	}
+	null, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer null.Close()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+	for name, f := range map[string]*os.File{os.DevNull: null, "a pipe": r} {
+		if isTerminal(int(f.Fd())) {
+			t.Errorf("%s is taken for a terminal", name)
+		}
+	}
+}
+
 func TestErrorReachesTerminal(t *testing.T) {
 	var out bytes.Buffer
 	if code := run(child("fail"), &out); code != 2 {

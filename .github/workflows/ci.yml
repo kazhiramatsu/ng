@@ -87,6 +87,57 @@ jobs:
           go build -o ng ./cmd/ng
           ./ng --version
 
+  # macOS: the same tests as on Arch, with the libraries from Homebrew and
+  # the fonts macOS comes with ("monospace" is Menlo there).
+  macos:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        nvim: [stable, nightly]
+    steps:
+      - name: Install packages
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: |
+          brew install sdl3 freetype fontconfig
+          # The image may have a pkg-config already (pkgconf, or the older
+          # formula that conflicts with it).
+          command -v pkg-config >/dev/null || brew install pkgconf
+          pkg-config --modversion sdl3 freetype2 fontconfig
+
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # tags, so that the build reports its version
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: false # ng has no dependencies, so no go.sum to key a cache on
+
+      - name: Install Neovim ${{ matrix.nvim }}
+        run: |
+          curl -fsSL -o /tmp/nvim.tar.gz \
+            https://github.com/neovim/neovim/releases/download/${{ matrix.nvim }}/nvim-macos-arm64.tar.gz
+          tar -C /tmp -xzf /tmp/nvim.tar.gz
+          /tmp/nvim-macos-arm64/bin/nvim --version | head -1
+
+      - name: Vet
+        run: go vet ./... && test -z "$(gofmt -l .)"
+
+      - name: Unit tests
+        run: go test -race ./...
+
+      - name: Integration tests
+        env:
+          NG_TEST_NVIM: /tmp/nvim-macos-arm64/bin/nvim
+        run: go test -race -tags integration -v ./test/
+
+      - name: Build
+        run: |
+          go build -o ng ./cmd/ng
+          ./ng --version
+
   # Debian: SDL3 is packaged since trixie (Ubuntu uses the same packages).
   debian:
     runs-on: ubuntu-24.04

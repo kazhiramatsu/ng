@@ -48,8 +48,33 @@ static int ng_get_bool(FcPattern *p, const char *obj) {
 	return FcPatternGetBool(p, obj, 0, &v) == FcResultMatch ? (int)v : -1;
 }
 
+// ng_alias returns another name to look for family under, or NULL. On
+// macOS, fontconfig's "monospace" lists only fonts found on Linux: it gives
+// Andale Mono (fontconfig 2.17 under a Japanese or Chinese locale: a
+// proportional CJK font), where Menlo is the macOS monospace font (and
+// MacVim's default). SF Mono, the first font of Neovim's default 'guifont'
+// on macOS, is installed as the hidden system font ".SF NS Mono".
+static const char *ng_alias(const char *family) {
+#ifdef __APPLE__
+	if (FcStrCmpIgnoreCase((const FcChar8 *)family, (const FcChar8 *)"monospace") == 0)
+		return "Menlo";
+	if (FcStrCmpIgnoreCase((const FcChar8 *)family, (const FcChar8 *)"SF Mono") == 0)
+		return ".SF NS Mono";
+#endif
+	return NULL;
+}
+
+static int ng_family_is(FcPattern *font, const char *family) {
+	FcChar8 *fam = NULL;
+	for (int i = 0; FcPatternGetString(font, FC_FAMILY, i, &fam) == FcResultMatch; i++) {
+		if (FcStrCmpIgnoreCase(fam, (const FcChar8 *)family) == 0)
+			return 1;
+	}
+	return 0;
+}
+
 static void ng_fill(FcPattern *font, const char *family, ng_match_t *out) {
-	FcChar8 *file = NULL, *fam = NULL;
+	FcChar8 *file = NULL;
 	FcPatternGetString(font, FC_FILE, 0, &file);
 	out->path = file ? strdup((const char *)file) : NULL;
 	out->index = ng_get_int(font, FC_INDEX, 0);
@@ -68,12 +93,8 @@ static void ng_fill(FcPattern *font, const char *family, ng_match_t *out) {
 		mat && mat->xy != 0;
 	out->family_ok = 0;
 	if (family) {
-		for (int i = 0; FcPatternGetString(font, FC_FAMILY, i, &fam) == FcResultMatch; i++) {
-			if (FcStrCmpIgnoreCase(fam, (const FcChar8 *)family) == 0) {
-				out->family_ok = 1;
-				break;
-			}
-		}
+		const char *alias = ng_alias(family);
+		out->family_ok = ng_family_is(font, family) || (alias && ng_family_is(font, alias));
 	}
 }
 
@@ -94,7 +115,9 @@ static FcPattern *ng_pattern(const char *const *families, int bold, int italic) 
 
 // ng_match finds the font for family.
 static int ng_match(const char *family, int bold, int italic, ng_match_t *out) {
-	const char *families[] = {family, NULL};
+	// The alias goes after the family: a font installed under the
+	// family's own name is preferred.
+	const char *families[] = {family, family ? ng_alias(family) : NULL, NULL};
 	FcPattern *pat = ng_pattern(families, bold, italic);
 	FcResult res;
 	FcPattern *m = FcFontMatch(NULL, pat, &res);

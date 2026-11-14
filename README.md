@@ -43,8 +43,9 @@ Other goals:
 - **Beautiful text.** Fonts are rendered with FreeType using your
   fontconfig settings. Type 1 and bitmap fonts work too (Pango-based GUIs
   can no longer use them).
-- **Linux only.** X11 and Wayland, including xrdp sessions through SDL's
-  software renderer. Other platforms are well served by other GUIs.
+- **Linux and macOS.** X11 and Wayland, including xrdp sessions through
+  SDL's software renderer, and macOS (see "macOS"). Windows is well
+  served by other GUIs.
 
 ## NG features
 
@@ -57,14 +58,12 @@ declined.
 - GUI tab bars, sidebars, file trees, menus and toolbars
 - A configuration file. ng is configured with Neovim options, variables
   and command line arguments only.
-- Windows and macOS. Other GUIs cover them. A community fork,
-  [gw31415/ng](https://github.com/gw31415/ng), builds ng on macOS and
-  follows this repository; it is maintained there, not here.
+- Windows. Other GUIs cover it.
 - Cursor blinking
 - Clipboard integration beyond what a terminal does: yank and put use
   Neovim's own clipboard provider (`"+y`, `"+p`). Like a terminal, ng
-  pastes the clipboard with **Ctrl+Shift+V** (as a bracketed paste, via
-  `nvim_paste`).
+  pastes the clipboard with **Ctrl+Shift+V** (**Cmd+V** on macOS) as a
+  bracketed paste, via `nvim_paste`.
 
 ## The same screen as the terminal
 
@@ -124,6 +123,7 @@ compression, animation, Unicode placeholders).
 ## Requirements
 
 - Linux (X11 or Wayland; xrdp sessions work with SDL's software renderer)
+  or macOS
 - Neovim: the **latest stable release series** (currently 0.12) and
   **nightly**. These two are tested every day in CI; older versions are
   not supported (ng shows a warning when started with one). When Neovim
@@ -140,11 +140,13 @@ sudo pacman -S sdl3 freetype2 fontconfig go
 sudo dnf install SDL3-devel freetype-devel fontconfig-devel golang gcc
 # Debian 13 (trixie) or later, Ubuntu 25.04 or later
 sudo apt install libsdl3-dev libfreetype-dev libfontconfig-dev golang-go gcc pkg-config
+# macOS: Homebrew; the C compiler comes with the Xcode Command Line Tools
+brew install sdl3 freetype fontconfig pkgconf go
 
 go install github.com/Shougo/ng/cmd/ng@latest
 ```
 
-Arch, Fedora and Debian are built in CI every day. Ubuntu 24.04 LTS and Debian 12 do
+Arch, Fedora, Debian and macOS are built in CI every day. Ubuntu 24.04 LTS and Debian 12 do
 not package SDL3; use a prebuilt binary there (below), or build SDL3
 yourself. If the
 distribution's Go is older than the one ng needs, `go install` downloads
@@ -200,7 +202,7 @@ ng [-f] --server [ADDRESS]
 | `--geometry COLSxROWS` | Grid size until the config sets 'lines'/'columns' (default: `80x24`) |
 | `--trace FILE` | Log redraws, keys and frames with timestamps (attach it to bug reports) |
 | `--version` | Print the version |
-| `--listen ADDRESS` | Start Neovim listening on this socket path or `host:port` instead of a new socket in `$XDG_RUNTIME_DIR` |
+| `--listen ADDRESS` | Start Neovim listening on this socket path or `host:port` instead of a new socket in `$XDG_RUNTIME_DIR` (`$TMPDIR` on macOS) |
 | `--server [ADDRESS]` | Attach to a running Neovim server (socket path or `host:port`). Without an address, attach to the Neovim a crashed ng left behind |
 
 Long command lines are best kept in a shell alias.
@@ -250,8 +252,8 @@ ng --server
 ```
 
 to attach to it again. Without an address, ng looks for the Neovim
-servers it started (`$XDG_RUNTIME_DIR/ng.*.sock`) that have no window
-attached. If there is exactly one, ng attaches to it; if there are
+servers it started (`$XDG_RUNTIME_DIR/ng.*.sock`, `$TMPDIR/ng.*.sock` on
+macOS) that have no window attached. If there is exactly one, ng attaches to it; if there are
 several, ng lists them with their current file and number of modified
 buffers and attaches to none. Inside ng, `:echo v:servername` shows the
 address.
@@ -338,7 +340,9 @@ ng reads fonts with FreeType, so the Type 1 "Courier 10 Pitch" works
 directly; no conversion to OpenType is needed. The size is converted to
 pixels like GTK does (points at 96 dpi times the display scale that SDL
 reports), so the same setting should give the same size as in GVim. If it
-does not, please report it with your `Xft.dpi` and scaling settings.
+does not, please report it with your `Xft.dpi` and scaling settings. On
+macOS a point is a unit of window coordinates (72 dpi) as in every macOS
+application, so sizes match MacVim's and Terminal's.
 
 ### Input methods
 
@@ -378,8 +382,8 @@ started.
 Under X11 (including XWayland), input goes through XIM: typing and
 converting work, but the text being composed is shown in the input
 method's own window rather than at the cursor, because SDL does not
-pass it to ng there. Under Wayland it is drawn at the cursor as
-described above. Input methods that run inside Neovim (such as
+pass it to ng there. Under Wayland and on macOS it is drawn at the cursor
+as described above. Input methods that run inside Neovim (such as
 skkeleton) need nothing from ng.
 
 ### Tiling window managers
@@ -425,6 +429,48 @@ fontconfig asks).
 
 Hinting and antialiasing follow your fontconfig settings
 (`~/.config/fontconfig/fonts.conf`).
+
+## macOS
+
+ng is used on macOS as on Linux, from a terminal: `ng file` gives the
+terminal back once the window is up, and the window comes to the front.
+There is no application bundle; while ng runs, the Dock shows its icon.
+Where macOS has conventions of its own, ng follows them:
+
+- **Cmd** keys: Cmd+V pastes (as Ctrl+Shift+V does on Linux). Cmd+Q and
+  Cmd+W close the window (`:confirm qall`), Cmd+H hides it, Cmd+M
+  minimizes it and Ctrl+Cmd+F makes it full screen. Other Cmd keys reach
+  Neovim as `<D-…>` for your mappings, such as
+  `nnoremap <D-s> <Cmd>write<CR>`; as in every Neovim GUI, an unmapped
+  one is inserted as its key notation in Insert mode.
+- **Option** types characters, as AltGr does on Linux: `@`, `[` or `\`
+  on many keyboard layouts, accents with Option+E, as in Terminal and
+  MacVim. With keys that type nothing (arrows, Tab, ...) and together
+  with Ctrl or Cmd it is Alt: `<M-Left>`, `<C-M-a>`. For `<M-…>` mappings
+  on letters, `let g:ng_macmeta = 1` makes Option Alt for every key, like
+  MacVim's 'macmeta'.
+- **Fonts** are sized in points as in MacVim and Terminal (see
+  "Configuration"). Neovim's default 'guifont' on macOS starts with SF
+  Mono, the font of Terminal and Xcode, which ng finds although macOS
+  installs it as a hidden system font. `monospace` means Menlo, the font
+  of MacVim.
+- **Input methods** work as described in "Input methods": ng draws the
+  text being composed at the cursor, and macOS puts its candidate window
+  there. To switch to an ASCII input source when leaving Insert mode, call
+  a tool such as im-select the same way:
+  `autocmd InsertLeave * call jobstart(['im-select', 'com.apple.keylayout.ABC'])`.
+- Holding a key repeats it, as in a terminal, instead of opening the
+  accent menu. Trackpad scrolling follows the system's scrolling
+  direction.
+
+Started from somewhere other than a shell (an Automator action, a
+launcher), `PATH` may not include Homebrew: give ng `--nvim
+/opt/homebrew/bin/nvim`.
+
+If building ng fails with `library 'fontconfig' not found` after `brew
+upgrade`, run `go clean -cache`. Homebrew's fontconfig gives pkg-config
+the directory of its version, which the upgrade removes, and Go's build
+cache keeps the flags pkg-config gave before.
 
 ## Measuring input latency
 
@@ -488,8 +534,9 @@ putting pixels on the screen.
   for example, dropped Type 1 and bitmap fonts, which is why such fonts
   stopped working in GVim. Go toolkits such as Gio rasterize text
   themselves, without hinting and without Type 1 support.
-- **X11 and Wayland with one code base**, including xrdp sessions.
-  Writing both backends directly would double the code to maintain.
+- **X11, Wayland and macOS with one code base**, including xrdp
+  sessions. Writing each backend directly would multiply the code to
+  maintain.
 - **Works without a GPU.** SDL_Renderer uses OpenGL or Vulkan when they
   are available and falls back to software rendering (for example under
   xrdp) with the same drawing code. Toolkits built on OpenGL alone, such
@@ -514,15 +561,16 @@ ng uses cgo on purpose, and not only for SDL3:
   time without cgo (for example with purego) removes the C compiler from
   the build, but SDL3 is still needed at run time, and SDL's C unions and
   callbacks become harder to use correctly.
-- **The usual costs of cgo do not apply to a Linux-only program.** Cross
-  compiling, static single-file binaries and C toolchains on Windows are
-  problems for multi-platform distribution. On Linux, a C compiler and the
+- **The usual costs of cgo do not apply here.** Cross compiling, static
+  single-file binaries and C toolchains on Windows are problems for
+  multi-platform distribution. On Linux, a C compiler and the
   development packages are one package-manager command away (see
   [Requirements](#requirements)), and binaries link against the libraries
-  the distribution already ships.
+  the distribution already ships. On macOS, Homebrew has the libraries
+  and the Xcode Command Line Tools the compiler.
 
-If ng ever had to support Windows or macOS, this decision would be
-revisited; it does not, so cgo stays.
+If ng ever had to support Windows, this decision would be revisited; it
+does not, so cgo stays.
 
 ## Reporting bugs
 
@@ -550,6 +598,12 @@ go test ./...                              # unit tests
 go test -tags integration ./test/          # needs nvim on $PATH
 NG_PAINT_DUMP=/tmp go test ./internal/paint/  # write snapshot PNGs
 ```
+
+The tests run on Linux and macOS alike. Font tests prefer the fonts CI
+installs on Linux (the Type 1 Courier 10 Pitch, IPAGothic) and use Menlo
+and Hiragino Sans where those are missing. The Nerd Font tests need UDEV
+Gothic NF (`brew install --cask font-udev-gothic-nf` on macOS) and are
+skipped without it, as in CI.
 
 The screen model and the painter do not depend on SDL, so drawing is
 tested by painting into images: for example, after an SKK-style

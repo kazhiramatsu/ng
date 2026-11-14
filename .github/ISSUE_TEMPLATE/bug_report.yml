@@ -82,6 +82,7 @@ body:
         - X11
         - X11 through xrdp
         - XWayland (SDL_VIDEO_DRIVER=x11)
+        - macOS
         - Other / not sure
     validations:
       required: true
@@ -99,7 +100,7 @@ body:
     id: distro
     attributes:
       label: Distribution
-      placeholder: Arch Linux / Manjaro / Fedora 43 / ...
+      placeholder: Arch Linux / Manjaro / Fedora 43 / macOS 26.1 / ...
     validations:
       required: true
 

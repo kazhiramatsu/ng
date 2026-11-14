@@ -30,6 +30,20 @@ func TestParseSpec(t *testing.T) {
 	}
 }
 
+// installed returns the first of families that is installed, or skips the
+// test. Tests list the fonts CI installs on Linux first, then macOS's own.
+func installed(t *testing.T, families ...string) string {
+	t.Helper()
+	for _, f := range families {
+		if s, err := NewSet(f, "", 96, 0); err == nil {
+			s.Close()
+			return f
+		}
+	}
+	t.Skipf("none of %q is installed", families)
+	return ""
+}
+
 // newTestSet loads Courier 10 Pitch (a Type 1 font, the reason ng uses
 // FreeType directly) if it is installed, else any monospace font.
 func newTestSet(t *testing.T) *Set {
@@ -131,7 +145,7 @@ func TestFallbackHasTheCharacter(t *testing.T) {
 }
 
 func TestGuifontwide(t *testing.T) {
-	s, err := NewSet("Courier 10 Pitch,monospace:h11", "IPAGothic,Noto Sans Mono CJK JP", 96, 2)
+	s, err := NewSet("Courier 10 Pitch,monospace:h11", "IPAGothic,Noto Sans Mono CJK JP,Hiragino Sans", 96, 2)
 	if err != nil {
 		t.Skip(err)
 	}
@@ -181,12 +195,13 @@ func TestDPIScalesCells(t *testing.T) {
 // GVim and ng read the same settings: the GTK syntax gives the same cells
 // as the :h syntax, and 'guifontwide' keeps its own size.
 func TestGVimSyntaxAndWideSize(t *testing.T) {
-	a, err := NewSet("Courier 10 Pitch:h16", "", 96, 0)
+	mono := installed(t, "Courier 10 Pitch", "Menlo")
+	a, err := NewSet(mono+":h16", "", 96, 0)
 	if err != nil {
-		t.Skip(err)
+		t.Fatal(err)
 	}
 	defer a.Close()
-	b, err := NewSet("Courier 10 Pitch 16", "", 96, 0)
+	b, err := NewSet(mono+" 16", "", 96, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,19 +210,20 @@ func TestGVimSyntaxAndWideSize(t *testing.T) {
 		t.Errorf(":h16 cell %dx%d, GTK syntax cell %dx%d size %v", a.CellW, a.CellH, b.CellW, b.CellH, b.Size())
 	}
 
-	big, err := NewSet("Courier 10 Pitch 16", "IPAGothic 16", 96, 0)
+	wide := installed(t, "IPAGothic", "Hiragino Sans")
+	big, err := NewSet(mono+" 16", wide+" 16", 96, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer big.Close()
-	small, err := NewSet("Courier 10 Pitch 16", "IPAGothic 10", 96, 0)
+	small, err := NewSet(mono+" 16", wide+" 10", 96, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer small.Close()
 	gb, gs := big.Glyph("漢", 0, 2), small.Glyph("漢", 0, 2)
 	if gb.Empty() || gs.Empty() {
-		t.Skip("no IPAGothic")
+		t.Skipf("no 漢 in %s", wide)
 	}
 	if gs.H >= gb.H {
 		t.Errorf("guifontwide size ignored: 10pt glyph %dpx tall, 16pt %dpx", gs.H, gb.H)
@@ -222,7 +238,7 @@ func TestGVimSyntaxAndWideSize(t *testing.T) {
 // 90-synthetic.conf); ng must still slant the glyphs, both for
 // 'guifontwide' and for a fallback font.
 func TestSyntheticItalicCJK(t *testing.T) {
-	for _, wide := range []string{"Noto Sans CJK JP", ""} {
+	for _, wide := range []string{"Noto Sans CJK JP,Hiragino Sans", ""} {
 		s, err := NewSet("Courier 10 Pitch,monospace:h14", wide, 96, 0)
 		if err != nil {
 			t.Skip(err)

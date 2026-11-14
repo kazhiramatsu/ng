@@ -72,6 +72,8 @@ func TestSurvivesGUIKill(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 	t.Setenv("XDG_RUNTIME_DIR", dir)
+	// ng also looks in $TMPDIR, where it puts its sockets on macOS.
+	t.Setenv("TMPDIR", dir)
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperProcess$")
 	cmd.Env = append(os.Environ(), "NG_TEST_HELPER=1", "XDG_RUNTIME_DIR="+dir)
