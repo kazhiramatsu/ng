@@ -67,7 +67,8 @@ type App struct {
 	win       *C.SDL_Window
 	ren       *C.SDL_Renderer
 	screenTex *C.SDL_Texture
-	moveTex   *C.SDL_Texture // scratch for moving screenTex rows (MoveRect)
+	moveTex   *C.SDL_Texture // scratch for moving screenTex rows (MoveRect); nil: repaint them
+	moveRows  bool           // scrolling moves painted rows (see onCPU)
 	texW      int
 	texH      int
 	atlasTex  *C.SDL_Texture
@@ -253,6 +254,12 @@ func (a *App) Run(connect Connector, opt Options) error {
 	}
 	a.packer = atlas.NewPacker(atlasSize, atlasSize)
 	a.mark("renderer created (" + C.GoString(C.SDL_GetRendererName(a.ren)) + ")")
+	if device := C.GoString(C.ng_renderer_device(a.ren)); device != "" {
+		a.moveRows = !onCPU(device)
+		a.mark(fmt.Sprintf("renderer device %s (moves scrolled rows: %v)", device, a.moveRows))
+	} else {
+		a.moveRows = true
+	}
 
 	a.scr = screen.New(opt.Cols, opt.Rows)
 	a.gridCols, a.gridRows = opt.Cols, opt.Rows
@@ -808,7 +815,9 @@ func (a *App) ensureScreenTexture() bool {
 	a.destroyScreenTextures()
 	w, h := C.int(max(1, a.pixW)), C.int(max(1, a.pixH))
 	a.screenTex = C.ng_create_texture(a.ren, C.SDL_TEXTUREACCESS_TARGET, w, h)
-	a.moveTex = C.ng_create_texture(a.ren, C.SDL_TEXTUREACCESS_TARGET, w, h)
+	if a.moveRows {
+		a.moveTex = C.ng_create_texture(a.ren, C.SDL_TEXTUREACCESS_TARGET, w, h)
+	}
 	a.texW, a.texH = a.pixW, a.pixH
 	return true
 }
@@ -820,6 +829,24 @@ func (a *App) destroyScreenTextures() {
 			*t = nil
 		}
 	}
+}
+
+// onCPU reports whether an OpenGL or Vulkan device, as ng_renderer_device
+// names it, is a CPU implementation: Mesa's llvmpipe (OpenGL and Vulkan)
+// and softpipe, Google's SwiftShader, as in virtual machines without 3D
+// acceleration. There moving painted rows through moveTex costs far more
+// than painting them again: scrolling a 216x70 window one line every 8 ms
+// on llvmpipe presented 15 of 800 frames, half a second late, instead of
+// 170 (docs/latency.md, "Moving rows by renderer"). SDL's own software
+// renderer moves them well.
+func onCPU(device string) bool {
+	d := strings.ToLower(device)
+	for _, s := range []string{"llvmpipe", "softpipe", "swiftshader", "software rasterizer"} {
+		if strings.Contains(d, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // MoveRect implements paint.Mover. SDL cannot draw a texture onto
