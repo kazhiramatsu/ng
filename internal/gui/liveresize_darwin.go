@@ -1,6 +1,7 @@
 package gui
 
 /*
+#include <unistd.h>
 #include "sdl.h"
 */
 import "C"
@@ -11,8 +12,8 @@ import "time"
 var live *App
 
 // liveWait is how long a new window size waits for Neovim to redraw at
-// that size before a frame is drawn, during a live resize. Neovim took 1
-// to 3 ms (docs/macos.md, "Metal renderer").
+// that size before a frame is drawn, during a live resize. Neovim took
+// less than 1 ms (docs/macos.md, "Metal renderer").
 const liveWait = 16 * time.Millisecond
 
 //export ngLiveResize
@@ -63,7 +64,9 @@ func (a *App) liveResize(sized bool) {
 		if !sized || !a.attached || !waiting || fits && drawn || !time.Now().Before(deadline) {
 			break
 		}
-		time.Sleep(250 * time.Microsecond)
+		// Not time.Sleep: in this callback from C it returned 14 ms
+		// later, not 0.25 ms.
+		C.usleep(200)
 	}
 	if !sized && !any {
 		return // nothing new to show

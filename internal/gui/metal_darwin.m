@@ -77,6 +77,7 @@ static NSString *const shaders = @""
 	SDL_MetalView view;
 	CAMetalLayer *layer;    // nil when drawing into target
 	id<MTLTexture> target;  // the frame, without a window
+	MTLRenderPassDescriptor *pass;
 	uint32_t background;    // the layer's background color, or ~0: not set
 	char name[256];
 }
@@ -129,6 +130,9 @@ ng_metal *ng_metal_new(SDL_Window *w, int atlas_size) {
 		m->atlas = new_atlas(m, atlas_size);
 		m->atlasSize = atlas_size;
 		m->quads = [NSMutableArray new];
+		m->pass = [MTLRenderPassDescriptor new];
+		m->pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+		m->pass.colorAttachments[0].storeAction = MTLStoreActionStore;
 		m->background = ~0u;
 		SDL_strlcpy(m->name, m->device.name.UTF8String, sizeof m->name);
 		if (w) {
@@ -260,10 +264,8 @@ bool ng_metal_frame(ng_metal *p, int w, int h, uint32_t clear_rgb, int grid, int
 			target = m->target;
 		}
 
-		MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
+		MTLRenderPassDescriptor *pass = m->pass;
 		pass.colorAttachments[0].texture = target;
-		pass.colorAttachments[0].loadAction = MTLLoadActionClear;
-		pass.colorAttachments[0].storeAction = MTLStoreActionStore;
 		pass.colorAttachments[0].clearColor = MTLClearColorMake(((clear_rgb >> 16) & 0xff) / 255.0,
 			((clear_rgb >> 8) & 0xff) / 255.0, (clear_rgb & 0xff) / 255.0, 1);
 		id<MTLCommandBuffer> cb = [m->queue commandBuffer];
@@ -298,6 +300,7 @@ bool ng_metal_frame(ng_metal *p, int w, int h, uint32_t clear_rgb, int grid, int
 			[enc drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4
 				instanceCount:total - grid baseInstance:grid];
 		[enc endEncoding];
+		pass.colorAttachments[0].texture = nil;
 
 		atomic_store(&quads->busy, 1);
 		[cb addCompletedHandler:^(id<MTLCommandBuffer> b) {
