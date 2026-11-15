@@ -105,6 +105,10 @@ bool ng_init(void) {
 	// accents menu wherever text input is on (Insert mode, the command
 	// line, and every mode with g:ng_ime_insert_only = 0).
 	SDL_SetHint(SDL_HINT_MAC_PRESS_AND_HOLD, "0");
+	// Scrolling goes on after the fingers leave the trackpad, as in every
+	// other application (and not when inertia is off in the system's
+	// settings). SDL turns this off unless asked.
+	SDL_SetHint(SDL_HINT_MAC_SCROLL_MOMENTUM, "1");
 #endif
 	// ng draws the preedit text itself, in the grid with its own CJK
 	// rendering; the input method still draws its candidate window.
