@@ -125,6 +125,7 @@ the frames presented):
 | Renderer | moved | repainted |
 | --- | --- | --- |
 | Metal (macOS, Apple M5, 3024x1836 px) | 0.22 ms, 1.02 s | 0.42 ms, 1.14 s |
+| OpenGL on a virtual GPU (VirtualBox), 1944x1260 px | 0.18 ms, 0.55 s | 0.37 ms, 0.75 s |
 | SDL software, macOS, 120x40 cells, 1680x1080 px | 1.74 ms, 2.23 s | 2.08 ms, 2.34 s |
 | SDL software, macOS, 3024x1836 px | 4.86 ms, 5.30 s | 4.65 ms, 5.07 s |
 | SDL software, Linux VM, 1944x1260 px | 10.7 ms, 336 frames | 15.3 ms, 233 frames |
@@ -134,7 +135,12 @@ the frames presented):
 (800 flushes each; the Linux VM is Ubuntu 26.04 in UTM on the same Mac,
 on Xvfb, where OpenGL and Vulkan are Mesa's CPU implementations, as in
 virtual machines without 3D acceleration. Shougo/ng main presented 88
-frames there on OpenGL, 39 ms late.)
+frames there on OpenGL, 39 ms late. The virtual GPU is Ubuntu 26.04 in
+VirtualBox 7.2 with 3D acceleration, on Xorg: Mesa's SVGA3D driver hands
+OpenGL to VirtualBox, which draws with the Mac's GPU, so ng's CPU time
+there leaves that work out. Moved or repainted, 797 to 800 of the 800
+flushes were presented, and OpenGL ES 2 gave the same times; Shougo/ng
+main presented them 5.15 ms late, the 4 ms wait.)
 
 On a GPU, moving halves the time to present. With SDL's own software
 renderer it is about even. With OpenGL or Vulkan running on the CPU the
@@ -148,6 +154,8 @@ and repaints the rows when it is llvmpipe, softpipe or SwiftShader
 Key event to present on the same Linux VM, real X key events from
 xdotool, 95 keystrokes: median 10.6 to 6.0 ms with the software renderer
 and 7.8 to 3.2 ms with OpenGL on llvmpipe, from Shougo/ng main to this.
+On the virtual GPU: 5.25 to 0.95 ms with OpenGL and 5.34 to 0.90 ms
+with OpenGL ES, as on macOS.
 
 ## New characters
 
