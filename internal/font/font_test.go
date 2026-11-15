@@ -110,6 +110,31 @@ func TestFallbackFitsCells(t *testing.T) {
 	}
 }
 
+// A character missing from 'guifont' is drawn with the first font in the
+// fallback order that has it, a font found once for each character.
+func TestFallbackHasTheCharacter(t *testing.T) {
+	s := newTestSet(t)
+	found := 0
+	for _, r := range "あ漢한ЖλΣ→★①─█⠿😀Ք" {
+		for _, style := range []Style{0, Bold, Italic, Bold | Italic} {
+			f := s.fallback(r, style)
+			if f == nil {
+				continue // no font has it here
+			}
+			found++
+			if !hasChar(f, r) {
+				t.Errorf("%c (style %d): %s does not have it", r, style, f.path)
+			}
+			if again := s.fallback(r, style); again != f {
+				t.Errorf("%c (style %d): %s, then %s", r, style, f.path, again.path)
+			}
+		}
+	}
+	if found == 0 {
+		t.Error("no fallback font for any of the characters")
+	}
+}
+
 func TestGuifontwide(t *testing.T) {
 	s, err := NewSet("Courier 10 Pitch,monospace:h11", "IPAGothic,Noto Sans Mono CJK JP", 96, 2)
 	if err != nil {
@@ -271,4 +296,27 @@ func TestWideSymbol(t *testing.T) {
 			}
 		}
 	}
+}
+
+// The first screen of a Japanese file, or scrolling into new text, brings
+// characters ng has not drawn yet: each is looked up in the fallback fonts
+// and rasterized.
+func BenchmarkNewCJKGlyphs(b *testing.B) {
+	const n = 2000 // new characters per Set
+	var s *Set
+	for i := 0; i < b.N; i++ {
+		if i%n == 0 {
+			b.StopTimer()
+			if s != nil {
+				s.Close()
+			}
+			var err error
+			if s, err = NewSet("monospace:h12", "", 96, 0); err != nil {
+				b.Fatal(err)
+			}
+			b.StartTimer()
+		}
+		s.Glyph(string(rune(0x4E00+i%n)), 0, 2)
+	}
+	s.Close()
 }

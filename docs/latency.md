@@ -45,3 +45,25 @@ command line during completion. 2 ms / 8 ms was tried first and still
 flickered; 4 / 16 came from flush intervals measured in traces. Cutting
 the wait for keystrokes only is possible but risks that flicker; not
 done.
+
+## New characters
+
+Each character missing from 'guifont' was looked up with `FcFontSort`,
+which scores and sorts every installed font. A screen of Japanese text
+can have hundreds of characters ng has not drawn yet, and the cost grows
+with the number of fonts.
+
+ng now sorts once per style and walks that list for each new character
+(package font, `ng_fallbacks_t`), as Pango does. `BenchmarkNewCJKGlyphs`
+(lookup and rasterizing, per character) on Ubuntu 26.04:
+
+| Fonts installed | before | after |
+| --- | --- | --- |
+| 11 (DejaVu, IPAGothic) | 43 µs | 2.7 µs |
+| 313 (with Noto) | 142 µs | 8.1 µs |
+
+The font picked can change. Of 66 test characters, with Noto and a
+Japanese locale, six symbols (⚠ ∑ ≤ █ ▒ ™) now come from DejaVu Sans
+Mono instead of Noto Sans CJK; with an English locale, Hebrew comes from
+Noto Sans Hebrew instead of DejaVu Sans. Kanji, kana, Hangul and emoji
+did not change.
