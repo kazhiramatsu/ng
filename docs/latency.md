@@ -44,4 +44,59 @@ flushes (package `frame`: present after 4 ms without a flush, at most
 command line during completion. 2 ms / 8 ms was tried first and still
 flickered; 4 / 16 came from flush intervals measured in traces. Cutting
 the wait for keystrokes only is possible but risks that flicker; not
-done.
+done. Since then ng presents at once when Neovim says it is idle (below).
+
+## Presenting the final flush at once
+
+2026-11-15, Neovim 0.12.6.
+
+Where do the bursts come from? Traces of everyday commands, typed over
+one RPC channel as ng types them (a script writing `nvim_input` to
+`--listen`'s socket), show:
+
+- **Normal mode:** with 'showcmd' (on by default) a command flushes
+  twice: first the key shown in the corner, then the result 0.02-3 ms
+  later.
+- **Search with 'incsearch':** the typed character, then the matches
+  2-4 ms later.
+- **Completion:** "-- Searching..." or a blank command line, then the
+  result 0.1-3 ms later.
+
+So the 4 ms wait mostly waited for flushes that were already there.
+Neovim triggers SafeState when it is about to wait for input, and its
+last flush comes right after. ng's bootstrap sends `ng_idle` from
+SafeState (`nvim.IdleNotification`), and ng presents the next flush at
+once (package `frame`). There is no SafeState while completion is
+active, an operator or a mapping is pending, or keys are queued; then
+ng waits as before.
+
+Two traps:
+
+- Keys fed from a Lua timer or with `nvim --remote-send` trigger an
+  extra SafeState before the key is read. Only `nvim_input` on one open
+  channel, as ng sends it, shows the real order.
+- A timer that changes nothing still sends `ng_idle`, with no flush
+  after it. ng ignores an `ng_idle` from before its last write to Neovim
+  (`rpc.Client.LastWrite`) or more than `MaxDelay` before the flush.
+
+Two known limits:
+
+- An `ng_idle` from an async wake-up that redraws nothing has no flush
+  after it. If it arrives just after ng writes a key, that key's first
+  flush can be taken for final.
+- Async redraws, such as `:terminal` output or timers, arrive as
+  `ng_idle` and a flush. They are presented at once, without the 4 to
+  16 ms merging.
+
+`TestIdleComesBeforeTheFinalFlush` checks the order against Neovim
+stable and nightly in the daily CI run.
+
+Results on Linux (Ubuntu 26.04 in VirtualBox with 3D acceleration:
+OpenGL on Mesa's SVGA3D, on Xorg):
+
+| Median (ms) | before | after |
+| --- | --- | --- |
+| Real X key events (xdotool, 95 keys, 120x40): key event to present | 5.0 | 0.6 |
+| Everyday commands over RPC (120x40): last flush to present | 4.7 | 0.4 |
+| Scrolling a line every 8 ms (216x70): flush to present | 5.2 | 0.8 |
+| `<C-f>` / `<C-b>` every 16 ms (216x70): flush to present | 5.3 | 0.7 |

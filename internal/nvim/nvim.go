@@ -313,9 +313,28 @@ for k, v in pairs(vim.fn.eval([[filter(copy(g:), 'v:key =~# "^ng_"')]])) do
   vim.rpcnotify(chan, '` + VarNotification + `', k, v)
 end`
 
+// IdleNotification is sent to ng when Neovim has nothing pending and will
+// wait for input (SafeState). It comes right before the flush with the
+// final screen for what was typed, which ng can then present at once (see
+// package frame). SafeState is not triggered while an operator or a
+// mapping is pending or completion is active, where the next flush may
+// not be the last.
+const IdleNotification = "ng_idle"
+
+// idleLua removes its autocommand when ng's channel is gone (a UI that
+// attached before and crashed), instead of failing at every keystroke.
+const idleLua = `
+vim.api.nvim_create_autocmd('SafeState', {
+  callback = function()
+    if not pcall(vim.rpcnotify, chan, '` + IdleNotification + `') then
+      return true
+    end
+  end,
+})`
+
 // Bootstrap is the Lua ng runs in Neovim before attaching. Prepare passes
 // ng's channel id as its first argument.
-const Bootstrap = "local chan = ...\nvim.g.ng = 1\n" + pasteLua + "\n" + uiEnterLua + "\n" + setSizeLua + "\n" + varsLua
+const Bootstrap = "local chan = ...\nvim.g.ng = 1\n" + pasteLua + "\n" + uiEnterLua + "\n" + setSizeLua + "\n" + varsLua + "\n" + idleLua
 
 var pasteSeq atomic.Int64
 

@@ -115,6 +115,12 @@ type App struct {
 	imageTex map[uint32]imageTexture // vim.ui.img images (main thread)
 
 	busySince time.Time // when Neovim last became busy, zero when it is not
+
+	// The frame being merged from flushes (package frame).
+	idleAt     time.Time // Neovim's last IdleNotification, until a flush uses it
+	firstFlush time.Time // first flush painted since the last present (zero: none)
+	lastFlush  time.Time
+	final      bool // lastFlush is final: present at once
 }
 
 // batch is one redraw notification and when it arrived.
@@ -122,6 +128,7 @@ type batch struct {
 	params  []any
 	at      time.Time
 	uiEnter bool   // the UIEnter notification, kept in order with redraws
+	idle    bool   // IdleNotification
 	setSize []int  // columns, lines from SetSizeNotification
 	varName string // VarNotification
 	varVal  any
@@ -160,6 +167,8 @@ func (a *App) Enqueue(method string, params []any) {
 		b = batch{params: params, at: time.Now()}
 	case nvim.UIEnterNotification:
 		b = batch{at: time.Now(), uiEnter: true}
+	case nvim.IdleNotification:
+		b = batch{at: time.Now(), idle: true}
 	case nvim.VarNotification:
 		if len(params) != 2 {
 			return
@@ -371,11 +380,15 @@ func (a *App) showWaiting() {
 // showTimeout is how long ng waits for UIEnter before showing the window.
 const showTimeout = 2 * time.Second
 
-// Frame coalescing: see package frame.
-const (
-	quietMs    = int(frame.Quiet / time.Millisecond)
-	maxDelayMs = frame.MaxDelay
-)
+// waitMs returns the milliseconds to wait for SDL events until t, rounded
+// up so that a frame is never presented early; 0 if t has passed.
+func waitMs(t time.Time) int {
+	d := time.Until(t)
+	if d <= 0 {
+		return 0
+	}
+	return int((d + time.Millisecond - 1) / time.Millisecond)
+}
 
 func (a *App) loop() error {
 	var ev C.SDL_Event
@@ -421,21 +434,35 @@ func (a *App) loop() error {
 		if err != nil || closed {
 			return err
 		}
-		if a.drawn {
-			deadline := time.Now().Add(maxDelayMs)
-			for time.Now().Before(deadline) && C.ng_wait_timeout(&ev, C.int(quietMs)) != 0 {
-				p, closed, err := a.drain(&ev)
-				if err != nil || closed {
-					return err
-				}
-				present = present || p
+		// Merge flushes into one frame until it is due (package frame):
+		// at once after a final flush. Other events (the mouse) are
+		// handled meanwhile but do not delay it.
+		for a.drawn {
+			ms := waitMs(a.frameDue(time.Now()))
+			if ms == 0 || C.ng_wait_timeout(&ev, C.int(ms)) == 0 {
+				break
 			}
+			p, closed, err := a.drain(&ev)
+			if err != nil || closed {
+				return err
+			}
+			present = present || p
 		}
 		if a.drawn || present {
-			a.drawn = false
+			a.drawn, a.firstFlush, a.final = false, time.Time{}, false
 			a.present()
 		}
 	}
+}
+
+// frameDue returns when to present what was drawn. A frame drawn without
+// a flush (an image, the window shown at UIEnter, the busy cursor) waits
+// like a flush that arrived now and is not final.
+func (a *App) frameDue(now time.Time) time.Time {
+	if a.firstFlush.IsZero() {
+		a.firstFlush, a.lastFlush = now, now
+	}
+	return frame.Due(a.firstFlush, a.lastFlush, a.final)
 }
 
 // drain handles ev and every other pending event, then applies the queued
@@ -471,6 +498,11 @@ func (a *App) processRedraws() (drawn, closed bool, err error) {
 		return drawn, closed, a.fatal
 	}
 	for _, b := range batches {
+		if b.idle {
+			a.tracef(b.at, "idle")
+			a.idleAt = b.at
+			continue
+		}
 		if b.varName != "" {
 			a.tracef(b.at, "var     g:%s = %v", b.varName, b.varVal)
 			if b.varVal == nil {
@@ -529,6 +561,11 @@ func (a *App) processRedraws() (drawn, closed bool, err error) {
 			a.busySince = time.Time{}
 		}
 		if flush {
+			final := a.takeFinal(b.at)
+			if a.firstFlush.IsZero() {
+				a.firstFlush = b.at
+			}
+			a.lastFlush, a.final = b.at, final
 			a.flushed = true
 			a.latency.Flush(b.at)
 			a.applyUIChanges()
@@ -546,6 +583,21 @@ func (a *App) processRedraws() (drawn, closed bool, err error) {
 		closed = false
 	}
 	return drawn, closed, nil
+}
+
+// takeFinal reports whether a flush that arrived at `at` is final (package
+// frame): Neovim said it was idle before it, and after ng last sent it
+// anything, whose effects may otherwise still be on the way. The idle
+// notification is used once.
+//
+// Known limits (docs/latency.md): an ng_idle with no flush after it, from
+// an async wake-up just after ng wrote a key, makes that key's first flush
+// look final. Async redraws (:terminal output, timers) come as ng_idle and
+// a flush, so they are presented at once, not merged.
+func (a *App) takeFinal(at time.Time) bool {
+	idle := a.idleAt
+	a.idleAt = time.Time{}
+	return !idle.IsZero() && idle.After(a.nv.LastWrite()) && at.Sub(idle) < frame.MaxDelay
 }
 
 // applyUIChanges reacts to option_set and set_title after a flush.

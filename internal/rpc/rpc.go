@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/Shougo/ng/internal/msgpack"
 )
@@ -40,8 +42,9 @@ type Client struct {
 	conn io.ReadWriteCloser
 	dec  *msgpack.Decoder
 
-	wmu sync.Mutex
-	enc *msgpack.Encoder
+	wmu       sync.Mutex
+	enc       *msgpack.Encoder
+	lastWrite atomic.Int64 // time of the last message sent, since epoch
 
 	mu      sync.Mutex
 	nextID  uint32
@@ -207,10 +210,25 @@ func toError(v any) error {
 	return &Error{Message: fmt.Sprint(v)}
 }
 
+// epoch makes time.Time storable in an atomic.Int64 (with its monotonic
+// clock reading).
+var epoch = time.Now()
+
 func (c *Client) write(msg []any) error {
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
+	c.lastWrite.Store(int64(time.Since(epoch)))
 	return c.enc.Encode(msg)
+}
+
+// LastWrite returns when the last message was sent (the zero time before
+// the first). Whatever Neovim reports from before then may not include
+// what that message caused.
+func (c *Client) LastWrite() time.Time {
+	if n := c.lastWrite.Load(); n != 0 {
+		return epoch.Add(time.Duration(n))
+	}
+	return time.Time{}
 }
 
 // Call invokes method and waits for the result.
