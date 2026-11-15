@@ -249,6 +249,7 @@ func (a *App) Run(connect Connector, opt Options) error {
 		return sdlError("SDL_CreateRenderer")
 	}
 	defer C.SDL_DestroyRenderer(a.ren)
+	C.ng_low_latency(a.ren)
 	if a.atlasTex = C.ng_create_texture(a.ren, C.SDL_TEXTUREACCESS_STATIC, atlasSize, atlasSize); a.atlasTex == nil {
 		return sdlError("atlas texture")
 	}

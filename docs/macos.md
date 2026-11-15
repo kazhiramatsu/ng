@@ -184,6 +184,42 @@ ng's CPU time (user and system):
 | SDL software | 4.86 ms, 5.30 s | 4.65 ms, 5.07 s |
 | SDL software, 120x40 (1680x1080 px) | 1.74 ms, 2.23 s | 2.08 ms, 2.34 s |
 
+### After the present
+
+2026-11-15, MacBook Pro (M5, 120 Hz ProMotion), ng's window not active.
+
+`--trace` ends at SDL_RenderPresent. A temporary build logged each
+drawable's `presentedTime` (`MTLDrawable addPresentedHandler`), typing
+`j` over RPC at several rhythms. Present to `presentedTime`, in ms:
+
+| Drawables (`maximumDrawableCount`) | Median | p90 |
+| --- | --- | --- |
+| 3 (the default) | 20.5 | 23.6 |
+| 2 | 3.4 | 7.9 |
+
+With three drawables the times lie on the display's 8.3 ms grid, two
+refreshes after the present, and vsync on made no difference. Frames
+coming faster than the display (`<C-e>` every 8 ms) blocked in
+`nextDrawable` for 8 ms each: flush to present 3.5 ms instead of 0.2 ms,
+and 35 ms from flush to `presentedTime`.
+
+With two, `nextDrawable` never waited, and the times are not on the grid:
+they say when the window server took the frame, not when it was on the
+glass. A capture of ng's own window showed the new pixels in the window
+server's output about 5 ms after the present. So the real gain is
+probably one refresh (8 ms), not the 17 ms of the table; measuring it
+needs a camera. ng now asks for two (`ng_low_latency`).
+
+With ng's window active (one run each, the same rhythms), present to
+`presentedTime` was 20.6 ms (p90 24) with three drawables and 4.3 ms
+(p90 7) with two. Switching to another application and back twice
+during the run with two did not stall ng.
+
+Once in the runs with the window not active, when another window was
+brought in front of ng's, one `nextDrawable` waited for its 1 s timeout;
+44 moves of ng's window under other windows and back did not repeat it,
+with two or three drawables.
+
 ## Tests
 
 - `TestSurvivesGUIKill` failed now and then: its socket path under
