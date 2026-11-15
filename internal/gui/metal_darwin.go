@@ -87,25 +87,31 @@ func newMetal(win *C.SDL_Window, atlasSize, atlasMax int) *metal {
 	}
 }
 
-// ownRenderer creates the window with ng's Metal renderer, unless the
-// environment has NG_RENDERER=sdl. It returns nil when SDL_Renderer is to
-// draw; the window is then not created.
-func (a *App) ownRenderer() renderer {
-	if os.Getenv("NG_RENDERER") == "sdl" {
-		return nil
-	}
+// sdlRenderer reports whether the environment asks for SDL_Renderer
+// instead of ng's Metal renderer, with NG_RENDERER=sdl.
+func sdlRenderer() bool { return os.Getenv("NG_RENDERER") == "sdl" }
+
+// createWindow creates the hidden window, for Metal unless SDL_Renderer is
+// to draw.
+func (a *App) createWindow() *C.SDL_Window {
 	title := C.CString("ng")
 	defer C.free(unsafe.Pointer(title))
-	win := C.ng_metal_create_window(title, 800, 600)
-	if win == nil {
+	if sdlRenderer() {
+		return C.ng_create_window(title, 800, 600)
+	}
+	return C.ng_metal_create_window(title, 800, 600)
+}
+
+// ownRenderer returns ng's Metal renderer for the window, or nil when
+// SDL_Renderer is to draw: it was asked for, or Metal is not available.
+func (a *App) ownRenderer() renderer {
+	if sdlRenderer() {
 		return nil
 	}
-	m := newMetal(win, metalAtlasSize, metalAtlasMaxSize)
+	m := newMetal(a.win, metalAtlasSize, metalAtlasMaxSize)
 	if m == nil {
-		C.SDL_DestroyWindow(win)
 		return nil
 	}
-	a.win = win
 	live = a
 	C.ng_metal_watch_live_resize(m.m)
 	return m

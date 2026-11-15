@@ -237,18 +237,13 @@ func (a *App) Run(connect Connector, opt Options) error {
 	defer C.SDL_Quit()
 	a.mark("sdl initialized (video driver " + C.GoString(C.SDL_GetCurrentVideoDriver()) + ")")
 
-	if a.own = a.ownRenderer(); a.own == nil {
-		title := C.CString("ng")
-		a.win = C.ng_create_window(title, 800, 600)
-		C.free(unsafe.Pointer(title))
-	}
-	if a.win == nil {
+	if a.win = a.createWindow(); a.win == nil {
 		return sdlError("SDL_CreateWindow")
 	}
 	defer C.SDL_DestroyWindow(a.win)
 	a.setIcon()
 	a.mark("window created")
-	if a.own != nil {
+	if a.own = a.ownRenderer(); a.own != nil {
 		defer a.own.close()
 		a.mark("renderer created (" + a.own.name() + ")")
 	} else if err := a.createRenderer(); err != nil {
