@@ -246,8 +246,13 @@ bool ng_metal_frame(ng_metal *p, int w, int h, uint32_t clear_rgb, int grid, int
 			CGSize size = CGSizeMake(w, h);
 			if (!CGSizeEqualToSize(m->layer.drawableSize, size))
 				m->layer.drawableSize = size;
-			if (m->layer.presentsWithTransaction != transaction)
+			if (m->layer.presentsWithTransaction != transaction) {
 				m->layer.presentsWithTransaction = transaction;
+				// With two drawables, a frame in a transaction waited
+				// 14 ms for a drawable, and a resize went in steps of
+				// 16.7 ms, not 8.3 (docs/macos.md, "Metal renderer").
+				m->layer.maximumDrawableCount = transaction ? 3 : 2;
+			}
 			// What shows where a frame does not cover the window.
 			set_background(m, clear_rgb);
 			drawable = [m->layer nextDrawable];
