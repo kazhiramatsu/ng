@@ -145,10 +145,9 @@ ng_metal *ng_metal_new(SDL_Window *w, int atlas_size) {
 			layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
 			layer.framebufferOnly = YES;
 			layer.opaque = YES;
-			// Colors are sRGB, as with SDL's renderer.
-			CGColorSpaceRef srgb = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-			layer.colorspace = srgb;
-			CGColorSpaceRelease(srgb);
+			// No colorspace, as with SDL's renderer: the display shows
+			// the color values as they are.
+			layer.colorspace = nil;
 			// Two drawables, not three, and no wait for the display's
 			// refresh: the window server takes a frame at once
 			// (docs/macos.md, "After the present").
@@ -215,16 +214,25 @@ ng_quad *ng_metal_quads(ng_metal *p, int n) {
 	return (ng_quad *)q->buf.contents;
 }
 
+static NSWindow *cocoa_window(NGMetal *m) {
+	return (__bridge NSWindow *)SDL_GetPointerProperty(SDL_GetWindowProperties(m->sdlWindow),
+		SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, NULL);
+}
+
+// set_background sets the color that shows where a frame does not cover
+// the window, in the window's color space, like the frames.
 static void set_background(NGMetal *m, uint32_t rgb) {
 	if (m->background == rgb)
 		return;
 	m->background = rgb;
-	CGColorRef c = CGColorCreateSRGB(((rgb >> 16) & 0xff) / 255.0, ((rgb >> 8) & 0xff) / 255.0, (rgb & 0xff) / 255.0, 1);
+	CGFloat c[4] = { ((rgb >> 16) & 0xff) / 255.0, ((rgb >> 8) & 0xff) / 255.0, (rgb & 0xff) / 255.0, 1 };
+	CGColorSpaceRef space = cocoa_window(m).colorSpace.CGColorSpace;
+	CGColorRef color = space ? CGColorCreate(space, c) : CGColorCreateSRGB(c[0], c[1], c[2], 1);
 	[CATransaction begin];
 	[CATransaction setDisableActions:YES];
-	m->layer.backgroundColor = c;
+	m->layer.backgroundColor = color;
 	[CATransaction commit];
-	CGColorRelease(c);
+	CGColorRelease(color);
 }
 
 // ng_metal_frame draws a frame of w x h pixels from the quads written to
@@ -253,7 +261,6 @@ bool ng_metal_frame(ng_metal *p, int w, int h, uint32_t clear_rgb, int grid, int
 				// 16.7 ms, not 8.3 (docs/macos.md, "Metal renderer").
 				m->layer.maximumDrawableCount = transaction ? 3 : 2;
 			}
-			// What shows where a frame does not cover the window.
 			set_background(m, clear_rgb);
 			drawable = [m->layer nextDrawable];
 			if (!drawable)
@@ -362,11 +369,6 @@ void *ng_metal_texture(ng_metal *p, int w, int h, const void *rgba) {
 void ng_metal_release_texture(void *tex) {
 	if (tex)
 		CFRelease(tex);
-}
-
-static NSWindow *cocoa_window(NGMetal *m) {
-	return (__bridge NSWindow *)SDL_GetPointerProperty(SDL_GetWindowProperties(m->sdlWindow),
-		SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, NULL);
 }
 
 // ng_metal_in_live_resize reports whether macOS is resizing the window in
