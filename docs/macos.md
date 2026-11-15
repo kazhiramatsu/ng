@@ -347,7 +347,7 @@ table has cycles (`/usr/bin/time -l`).
 `BenchmarkMetalFrame`, 200x60 cells drawn into memory, ng's own work for
 a frame before Metal: 198 µs when every row changes (175 µs of it is
 `paint.Row`), 13 µs for a scroll by one line, 3 µs when only the cursor
-moves. Encoding and committing the frame took about 35 µs more in a
+moves. Encoding and committing the frame took 30 to 45 µs more in a
 window, whatever the grid size.
 
 Not measured: large windows on the display (the test windows were
