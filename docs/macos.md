@@ -163,6 +163,11 @@ scroll 18 lines. ng also reversed the values of `SDL_MOUSEWHEEL_FLIPPED`
 events, which undid "natural scrolling", the macOS default (and under
 Wayland the same setting): the values already follow it.
 
+SDL also asks macOS not to send the momentum events that keep scrolling
+after the fingers leave the trackpad (`AppleMomentumScrollSupported`, set
+from `SDL_HINT_MAC_SCROLL_MOMENTUM`). ng sets the hint, so scrolling
+slows down to a stop as in other applications.
+
 ## Latency
 
 `ng --trace` while typing: median 5.8 ms from key event to present (frame
