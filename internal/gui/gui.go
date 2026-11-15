@@ -1,6 +1,7 @@
 // Package gui is ng's window: SDL3 for the window, input and drawing (with
 // SDL_Renderer, so it runs on OpenGL, Vulkan, Metal or SDL's software
-// renderer under xrdp), and the paint package for what to draw.
+// renderer under xrdp), and the paint package for what to draw. On macOS
+// a Metal renderer of ng's own draws instead (renderer.go).
 package gui
 
 /*

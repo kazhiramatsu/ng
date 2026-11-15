@@ -296,10 +296,10 @@ func fullScreen(cols, rows, shift int) []any {
 	return append(params, []any{"flush"})
 }
 
-// BenchmarkMetalFrame measures ng's CPU time for a frame of a 200x60 grid
-// with the Metal renderer, drawn into memory: painting the rows and
-// handing the frame to the GPU (the GPU's own work is not waited for in
-// a window, but is here).
+// BenchmarkMetalFrame measures a frame of a 200x60 grid with the Metal
+// renderer, drawn into memory. The cases with "paint" and "build" are ng's
+// own work for a frame, before it is handed to Metal; the others also wait
+// for the GPU to finish the frame, which a window does not.
 func BenchmarkMetalFrame(b *testing.B) {
 	m, f := testMetal(b, metalAtlasSize, metalAtlasMaxSize)
 	const cols, rows = 200, 60
@@ -316,10 +316,11 @@ func BenchmarkMetalFrame(b *testing.B) {
 			m.present(v)
 		}
 	})
-	b.Run("full-repaint-paint-only", func(b *testing.B) {
+	b.Run("full-repaint-paint-build", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			s.HandleRedraw(full[i%2])
 			m.paintGrid(s, f)
+			m.build(v)
 		}
 	})
 	scroll := []any{
@@ -334,9 +335,26 @@ func BenchmarkMetalFrame(b *testing.B) {
 			m.present(v)
 		}
 	})
+	b.Run("scroll-one-line-paint-build", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			s.HandleRedraw(scroll)
+			m.paintGrid(s, f)
+			m.build(v)
+		}
+	})
 	b.Run("present-only", func(b *testing.B) { // the cursor moved
 		for i := 0; i < b.N; i++ {
 			m.present(v)
 		}
 	})
+	b.Run("present-only-build", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			m.build(v)
+		}
+	})
+	n := 0
+	for _, r := range m.rows {
+		n += len(r)
+	}
+	b.Logf("%dx%d pixels, %d quads", v.w, v.h, n)
 }

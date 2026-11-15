@@ -249,6 +249,110 @@ not change in step with the window's frame. That would need
 `presentsWithTransaction` and a different present in SDL's Metal
 renderer, so ng does not draw during a live resize.
 
+## Metal renderer
+
+2026-11-15, a trial on the branch `metal-renderer`. The same MacBook Pro.
+
+On macOS ng draws with a Metal renderer of its own (`metal_darwin.go`,
+`metal_darwin.m`). SDL still makes the window and handles the keyboard,
+the mouse and the input method. `NG_RENDERER=sdl` in the environment
+selects SDL_Renderer again. Linux is unchanged.
+
+How it draws:
+
+- It keeps no picture of the grid. For each grid row it keeps the
+  rectangles and glyphs that `paint.Row` drew, 16 bytes each. A changed
+  row replaces its list. A scroll moves the lists (`MoveRect`).
+- A frame is one render pass into the window's drawable: all rows as one
+  instanced draw call, then the images, then the cursor and the preedit
+  text as a second call.
+- The glyph atlas has one byte per pixel (4 MB, was 16 MB). It doubles
+  its side when a screen needs more glyphs.
+- The frame's data goes into shared buffers that are used again.
+
+`TestMetalMatchesImagePainter` draws into memory and compares the frame
+with `paint.ImagePainter`: text, wide characters, decorations, padding,
+an image, every cursor shape, the preedit text, 300 random steps of
+changed rows and scrolls, a font change. Colors differ by at most 1 of
+255, because the GPU rounds a blend and the CPU painter truncates it.
+
+### Live resize
+
+During a live resize, SDL tells event watchers of each new window size
+from inside AppKit's `windowDidResize`. ng draws there (`liveResize`):
+it asks Neovim for the new grid size, waits for the redraw (up to
+16 ms), and presents the frame with `presentsWithTransaction`, so the
+frame and the window's new size appear together. While the user drags,
+SDL's 60 Hz timer event draws Neovim's later redraws. If a frame is
+late, the old frame stays at the top left in its own size
+(`contentsGravity`); it is not stretched.
+
+Resizes animated with `setFrame:display:animate:` (8 per run, 231 ms
+each), checked in a capture of ng's own window. A frame is in step when
+the status line has its own height and the grid fits the captured window
+size:
+
+| Renderer | Frames captured | In step | Stretched |
+| --- | --- | --- | --- |
+| SDL_Renderer | 163 | 8 | 146 |
+| Metal | 150 | 148 | 0 |
+
+The two other Metal frames had the grid of the next step, 4 and 6 pixels
+off. Neovim answered each new size in 0.3 ms (mean; at most 0.9 ms) for
+40x10 to 53x13 cells.
+
+Two things that went wrong first:
+
+- `time.Sleep(250 µs)` in the callback returned after 14 ms. The wait
+  for Neovim now uses `usleep`.
+- With two drawables, `nextDrawable` waited 14 ms (median) for each frame
+  in a transaction, and the resize went in steps of 16.7 ms. With three
+  it waited 0.7 ms and the steps were 8.3 ms. So ng uses three drawables
+  during a live resize and two otherwise.
+
+A real drag with the mouse was not tested here; only a person can do it.
+
+### Numbers
+
+One binary, 50x10 cells (1150x480 px), the window not active, keys sent
+over RPC. Times in ms, median (p90).
+
+`j`/`k` at three rhythms, 191 frames:
+
+| | SDL_Renderer | Metal |
+| --- | --- | --- |
+| Flush to the end of the present call | 0.19 (0.24) | 0.11 (0.15) |
+| Present to `presentedTime` | 4.38 (5.86) | 4.53 (5.99) |
+| Painting, per flush | 0.060 | 0.002 |
+| CPU cycles of ng, whole run | 1.22e9 | 0.99e9 |
+| Peak memory footprint | 141 MB | 80 MB |
+
+`<C-e>` every 8 ms and every 2 ms, then `<C-f>`/`<C-b>`: 3403 flushes,
+1700 frames:
+
+| | SDL_Renderer | Metal |
+| --- | --- | --- |
+| Flush to the end of the present call | 0.13 (0.18) | 0.08 (0.11) |
+| Present to `presentedTime` | 3.00 (4.93) | 2.95 (4.55) |
+| Painting, per flush | 0.045 | 0.002 |
+| Frames presented | 1696 | 1702 |
+| CPU cycles of ng, whole run | 5.35e9 | 3.64e9 |
+| Peak memory footprint | 161 MB | 85 MB |
+
+Present to `presentedTime` did not change: it is the wait for the
+display's next refresh. CPU time itself changed by a factor of two
+between runs of the same binary (the cores the system chose), so the
+table has cycles (`/usr/bin/time -l`).
+
+`BenchmarkMetalFrame`, 200x60 cells drawn into memory, ng's own work for
+a frame before Metal: 198 µs when every row changes (175 µs of it is
+`paint.Row`), 13 µs for a scroll by one line, 3 µs when only the cursor
+moves. Encoding and committing the frame took about 35 µs more in a
+window, whatever the grid size.
+
+Not measured: large windows on the display (the test windows were
+small), a real drag, and the time on the glass (that needs a camera).
+
 ## Tests
 
 - `TestSurvivesGUIKill` failed now and then: its socket path under

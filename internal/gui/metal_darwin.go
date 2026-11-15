@@ -307,6 +307,24 @@ func (m *metal) paintGrid(s *screen.Screen, f *font.Set) {
 
 // present implements renderer.
 func (m *metal) present(v view) (area paint.Rect, cursorX int) {
+	area, cursorX, grid, n := m.build(v)
+	var images *C.ng_image_draw
+	if len(m.images) > 0 {
+		images = &m.images[0]
+	}
+	flags := C.int(0)
+	if v.inStep {
+		flags |= C.NG_METAL_TRANSACTION
+	}
+	C.ng_metal_frame(m.m, C.int(v.w), C.int(v.h), C.uint32_t(v.scr.DefaultBG&0xffffff),
+		C.int(grid), C.int(n), images, C.int(len(m.images)), flags)
+	return area, cursorX
+}
+
+// build collects the n quads of a frame in the buffer the GPU reads: the
+// padding and the rows, `grid` quads, then the cursor and the preedit
+// text. It also lists the images to draw between the two.
+func (m *metal) build(v view) (area paint.Rect, cursorX, grid, n int) {
 	s, f := v.scr, v.fonts
 	for again := false; ; again = true {
 		m.pad, m.over, m.images = m.pad[:0], m.over[:0], m.images[:0]
@@ -334,7 +352,7 @@ func (m *metal) present(v view) (area paint.Rect, cursorX int) {
 	}
 	m.stale, m.last = false, false
 
-	n := len(m.pad) + len(m.over)
+	n = len(m.pad) + len(m.over)
 	for _, r := range m.rows {
 		n += len(r)
 	}
@@ -343,19 +361,8 @@ func (m *metal) present(v view) (area paint.Rect, cursorX int) {
 	for _, r := range m.rows {
 		at += copy(buf[at:], r)
 	}
-	grid := at
 	copy(buf[at:], m.over)
-	var images *C.ng_image_draw
-	if len(m.images) > 0 {
-		images = &m.images[0]
-	}
-	flags := C.int(0)
-	if v.inStep {
-		flags |= C.NG_METAL_TRANSACTION
-	}
-	C.ng_metal_frame(m.m, C.int(v.w), C.int(v.h), C.uint32_t(s.DefaultBG&0xffffff),
-		C.int(grid), C.int(n), images, C.int(len(m.images)), flags)
-	return area, cursorX
+	return area, cursorX, at, n
 }
 
 // read returns the last frame of a renderer without a window.
