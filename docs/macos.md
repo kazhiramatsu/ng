@@ -220,6 +220,35 @@ brought in front of ng's, one `nextDrawable` waited for its 1 s timeout;
 44 moves of ng's window under other windows and back did not repeat it,
 with two or three drawables.
 
+## Resizing
+
+2026-11-15, the same MacBook Pro.
+
+While the user drags the window's edge (a live resize), macOS runs its
+own event loop: `SDL_WaitEvent` does not return until the mouse button
+is released, ng cannot draw, and macOS shows the last frame stretched to
+the new size. ng draws the new size when the button is released, but
+the window kept showing the stretched frame until the next key.
+
+A temporary build logged each drawable's `presentedTime`. The frames
+presented up to 16 ms after a live resize ended never reached the
+display; at 27 to 29 ms some did, and from 50 ms on all did. This was
+the same with two or three drawables, and with resizes animated by
+`setFrame:display:animate:`, which macOS also runs as a live resize. A
+capture of ng's own window agreed: its content stopped changing 12 ms
+after the resize. So ng presents again 100 ms after the window size
+changes (`presentAgainLater`). Resized by hand, the frames 3 to 8 ms
+after the release were not shown and those 100 ms after were, in 7 of 7
+resizes.
+
+Drawing during the live resize was tried too: SDL sends
+`SDL_EVENT_WINDOW_EXPOSED` with data1 = 1 to event watchers 60 times a
+second while macOS runs its loop. About half of those frames were shown,
+and the window flickered and shook while dragged, because the frames do
+not change in step with the window's frame. That would need
+`presentsWithTransaction` and a different present in SDL's Metal
+renderer, so ng does not draw during a live resize.
+
 ## Tests
 
 - `TestSurvivesGUIKill` failed now and then: its socket path under

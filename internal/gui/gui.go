@@ -1094,6 +1094,7 @@ func (a *App) handle(e event) bool {
 			a.settleAt = time.Now().Add(settleDelay)
 		}
 		a.paintDirty()
+		a.presentAgainLater()
 		return true
 	case C.SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
 		if err := a.loadFonts(a.scr.OptionString("guifont"), a.scr.OptionString("guifontwide"),
