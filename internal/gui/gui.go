@@ -62,6 +62,8 @@ type App struct {
 	win       *C.SDL_Window
 	ren       *C.SDL_Renderer
 	screenTex *C.SDL_Texture
+	moveTex   *C.SDL_Texture // scratch for moving screenTex rows (MoveRect); nil: repaint them
+	moveRows  bool           // scrolling moves painted rows (see onCPU)
 	texW      int
 	texH      int
 	atlasTex  *C.SDL_Texture
@@ -236,6 +238,12 @@ func (a *App) Run(connect Connector, opt Options) error {
 	}
 	a.packer = atlas.NewPacker(atlasSize, atlasSize)
 	a.mark("renderer created (" + C.GoString(C.SDL_GetRendererName(a.ren)) + ")")
+	if device := C.GoString(C.ng_renderer_device(a.ren)); device != "" {
+		a.moveRows = !onCPU(device)
+		a.mark(fmt.Sprintf("renderer device %s (moves scrolled rows: %v)", device, a.moveRows))
+	} else {
+		a.moveRows = true
+	}
 
 	a.scr = screen.New(opt.Cols, opt.Rows)
 	a.gridCols, a.gridRows = opt.Cols, opt.Rows
@@ -738,21 +746,58 @@ func (a *App) updatePixelSize(answer bool) {
 	a.scr.MarkAllDirty()
 }
 
-// ensureScreenTexture (re)creates the texture that holds the painted grid.
-// It reports whether the texture is new and must be painted completely.
+// ensureScreenTexture (re)creates the texture that holds the painted grid,
+// and the one that scrolling moves its rows through (MoveRect). It
+// reports whether the texture is new and must be painted completely.
 func (a *App) ensureScreenTexture() bool {
 	if a.screenTex != nil && a.texW == a.pixW && a.texH == a.pixH {
 		return false
 	}
-	if a.screenTex != nil {
-		C.SDL_DestroyTexture(a.screenTex)
+	a.destroyScreenTextures()
+	w, h := C.int(max(1, a.pixW)), C.int(max(1, a.pixH))
+	a.screenTex = C.ng_create_texture(a.ren, C.SDL_TEXTUREACCESS_TARGET, w, h)
+	if a.moveRows {
+		a.moveTex = C.ng_create_texture(a.ren, C.SDL_TEXTUREACCESS_TARGET, w, h)
 	}
-	a.screenTex = C.ng_create_texture(a.ren, C.SDL_TEXTUREACCESS_TARGET, C.int(max(1, a.pixW)), C.int(max(1, a.pixH)))
 	a.texW, a.texH = a.pixW, a.pixH
 	return true
 }
 
-// paintDirty repaints the changed rows into the screen texture.
+func (a *App) destroyScreenTextures() {
+	for _, t := range []**C.SDL_Texture{&a.screenTex, &a.moveTex} {
+		if *t != nil {
+			C.SDL_DestroyTexture(*t)
+			*t = nil
+		}
+	}
+}
+
+// onCPU reports whether an OpenGL or Vulkan device, as ng_renderer_device
+// names it, is a CPU implementation: Mesa's llvmpipe (OpenGL and Vulkan)
+// and softpipe, Google's SwiftShader, or a name with "software
+// rasterizer", as in virtual machines without 3D acceleration. There
+// moving painted rows through moveTex costs more than painting them
+// again, and ng falls behind Neovim (docs/latency.md, "Moving rows by
+// renderer"). SDL's own software renderer moves them well.
+func onCPU(device string) bool {
+	d := strings.ToLower(device)
+	for _, s := range []string{"llvmpipe", "softpipe", "swiftshader", "software rasterizer"} {
+		if strings.Contains(d, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// MoveRect implements paint.Mover. SDL cannot draw a texture onto
+// itself, so the area goes through moveTex.
+func (a *App) MoveRect(x, y, w, h, dy int) {
+	C.ng_copy(a.ren, a.screenTex, a.moveTex, C.int(x), C.int(y), C.int(w), C.int(h), 0)
+	C.ng_copy(a.ren, a.moveTex, a.screenTex, C.int(x), C.int(y), C.int(w), C.int(h), C.int(dy))
+}
+
+// paintDirty repaints the changed rows into the screen texture. Scrolled
+// rows are moved there rather than repainted (paint.Scroll).
 func (a *App) paintDirty() {
 	if !a.shown || a.fonts == nil {
 		return
@@ -764,7 +809,16 @@ func (a *App) paintDirty() {
 	if full {
 		a.scr.MarkAllDirty()
 	}
-	rows := a.scr.TakeDirty()
+	var scrolls []screen.Scroll
+	var rows []int
+	if a.moveTex != nil {
+		scrolls, rows = a.scr.TakeChanges()
+	} else {
+		rows = a.scr.TakeDirty()
+	}
+	for _, sc := range scrolls {
+		paint.Scroll(a, a.fonts, sc)
+	}
 	C.SDL_SetRenderTarget(a.ren, a.screenTex)
 	if full || len(rows) == a.scr.Height {
 		paint.Padding(a, a.scr, a.fonts, a.pixW, a.pixH)
@@ -952,10 +1006,7 @@ func (a *App) handle(e event) bool {
 	case C.SDL_EVENT_WINDOW_EXPOSED:
 		return true
 	case C.SDL_EVENT_RENDER_TARGETS_RESET, C.SDL_EVENT_RENDER_DEVICE_RESET:
-		if a.screenTex != nil {
-			C.SDL_DestroyTexture(a.screenTex)
-			a.screenTex = nil
-		}
+		a.destroyScreenTextures()
 		a.resetAtlas()
 		a.paintDirty()
 		return true

@@ -3,9 +3,11 @@ package paint
 import (
 	"bytes"
 	"encoding/base64"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
+	"math/rand/v2"
 	"os"
 	"testing"
 
@@ -107,6 +109,90 @@ func TestScrollRepaintMatchesFullPaint(t *testing.T) {
 	}
 	if !bytes.Equal(p.Img.Pix, paintAll(s, f).Img.Pix) {
 		t.Error("scroll repaint differs from a full repaint")
+	}
+}
+
+// Moving painted rows for grid_scroll (screen.TakeChanges, Scroll) and
+// repainting only the rows that changed must give the same pixels as a full
+// repaint, whatever the scrolls: up and down, by more than the region,
+// several per flush, and regions narrower than the grid, as with vertical
+// splits. Region edges and double-width characters are at even columns, as
+// Neovim never splits a character between windows.
+func TestScrollChangesMatchFullPaint(t *testing.T) {
+	f := loadFont(t)
+	const cols, rows = 12, 8
+	s := screen.New(cols, rows)
+	rnd := rand.New(rand.NewPCG(1, 2))
+	line := func(r int) []any {
+		cells := []any{}
+		for c := 0; c < cols; c += 2 {
+			hl := int64(rnd.IntN(4))
+			switch rnd.IntN(3) {
+			case 0:
+				cells = append(cells, []any{"漢", hl}, []any{""})
+			case 1:
+				cells = append(cells, []any{string(rune('a' + rnd.IntN(26))), hl}, []any{"g", hl})
+			default:
+				cells = append(cells, []any{" ", hl, int64(2)})
+			}
+		}
+		return []any{"grid_line", []any{int64(1), int64(r), int64(0), cells, false}}
+	}
+	redraw(t, s,
+		[]any{"default_colors_set", []any{int64(0xd0d0d0), int64(0x101010), int64(-1), int64(0), int64(0)}},
+		[]any{"hl_attr_define", []any{int64(1), map[string]any{"background": int64(0x203040)}, map[string]any{}, []any{}}},
+		[]any{"hl_attr_define", []any{int64(2), map[string]any{"foreground": int64(0xff8000), "underline": true}, map[string]any{}, []any{}}},
+		[]any{"hl_attr_define", []any{int64(3), map[string]any{"reverse": true, "bold": true}, map[string]any{}, []any{}}},
+	)
+	for r := 0; r < rows; r++ {
+		redraw(t, s, line(r))
+	}
+	s.TakeChanges()
+	p := paintAll(s, f)
+	scroll := func(top, bot, left, right, n int) []any {
+		return []any{"grid_scroll", []any{int64(1), int64(top), int64(bot), int64(left), int64(right), int64(n), int64(0)}}
+	}
+	check := func(what string, events [][]any) {
+		t.Helper()
+		redraw(t, s, append(events, []any{"flush"})...)
+		scrolls, dirty := s.TakeChanges()
+		for _, sc := range scrolls {
+			Scroll(p, f, sc)
+		}
+		for _, r := range dirty {
+			Row(p, s, f, r)
+		}
+		if want := paintAll(s, f); !bytes.Equal(p.Img.Pix, want.Img.Pix) {
+			dump(t, "scroll-changes", p)
+			dump(t, "scroll-full", want)
+			t.Fatalf("%s: moved and repainted rows differ from a full repaint after %v", what, events)
+		}
+	}
+	// A row that changed and then scrolled in the same flush is repainted
+	// where it went, not where it was.
+	check("changed then scrolled", [][]any{line(3), scroll(0, rows, 0, cols, 1)})
+	check("changed then scrolled in a split", [][]any{line(5), scroll(2, 7, 4, 10, -2)})
+	for step := 0; step < 200; step++ {
+		var events [][]any
+		for i := rnd.IntN(4); i >= 0; i-- {
+			if rnd.IntN(2) == 0 {
+				events = append(events, line(rnd.IntN(rows)))
+				continue
+			}
+			top := rnd.IntN(rows - 1)
+			bot := top + 1 + rnd.IntN(rows-top)
+			left, right := 0, cols
+			if rnd.IntN(2) == 0 {
+				left = 2 * rnd.IntN(cols/2)
+				right = left + 2 + 2*rnd.IntN((cols-left)/2)
+			}
+			n := 1 + rnd.IntN(bot-top+1)
+			if rnd.IntN(2) == 0 {
+				n = -n
+			}
+			events = append(events, scroll(top, bot, left, right, n))
+		}
+		check(fmt.Sprintf("step %d", step), events)
 	}
 }
 

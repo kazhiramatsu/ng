@@ -45,3 +45,36 @@ command line during completion. 2 ms / 8 ms was tried first and still
 flickered; 4 / 16 came from flush intervals measured in traces. Cutting
 the wait for keystrokes only is possible but risks that flicker; not
 done.
+
+## Moving rows by renderer
+
+A scroll repainted every row of its region. Rows are painted
+independently, so now the painted rows move with their cells
+(`screen.TakeChanges`, `paint.Scroll`). The GUI copies them through a
+second texture, since SDL cannot draw a texture onto itself.
+
+Scrolling a line every 8 ms, 216x70 (1944x1260 px, 800 flushes), with
+rows moved or repainted. Median flush to present (it includes the 4 ms
+wait for quiet), and ng's CPU time (user and system) or the frames
+presented:
+
+| Renderer | moved | repainted |
+| --- | --- | --- |
+| OpenGL on a virtual GPU | 4.7 ms, 0.58 s | 5.2 ms, 1.00 s |
+| SDL software | 8.9 ms, 370 frames | 10.3 ms, 280 frames |
+| OpenGL on llvmpipe | 16 ms, 200 frames | 10 ms, 290 frames |
+| Vulkan on lavapipe | 98 ms, 35 frames | 19 ms, 170 frames |
+
+The machine is Ubuntu 26.04 in VirtualBox 7.2 on an Apple M5 Mac. The
+virtual GPU is VirtualBox's 3D acceleration, on Xorg: Mesa's SVGA3D
+driver hands OpenGL to the host's GPU, so ng's CPU time leaves that work
+out. The other rows run on Xvfb, where OpenGL and Vulkan are Mesa's CPU
+implementations, as in virtual machines without 3D acceleration.
+
+On a GPU, moving saves most of the painting. With SDL's software
+renderer it is a little faster. On llvmpipe and lavapipe the two
+full-window copies cost more than painting the rows, and ng falls behind
+Neovim. So ng asks the renderer for its device (`ng_renderer_device`:
+`GL_RENDERER` or the Vulkan device name) and repaints when it is
+llvmpipe, softpipe, SwiftShader or a software rasterizer (`onCPU` in
+package gui; the trace says which).

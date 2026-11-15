@@ -2,6 +2,7 @@
 // and several SDL macros are not usable from cgo directly.
 #include <string.h>
 #include "sdl.h"
+#include <SDL3/SDL_vulkan.h>
 
 
 
@@ -142,6 +143,63 @@ bool ng_blit(SDL_Renderer *r, SDL_Texture *t, int w, int h) {
 	bool ok = SDL_RenderTexture(r, t, &rect, &rect);
 	SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
 	return ok;
+}
+
+// ng_copy draws the w x h area at (x, y) of src at (x, y + dy) of dst,
+// replacing what is there.
+bool ng_copy(SDL_Renderer *r, SDL_Texture *src, SDL_Texture *dst, int x, int y, int w, int h, int dy) {
+	SDL_FRect s = { (float)x, (float)y, (float)w, (float)h };
+	SDL_FRect d = { (float)x, (float)(y + dy), (float)w, (float)h };
+	SDL_SetRenderTarget(r, dst);
+	SDL_SetTextureBlendMode(src, SDL_BLENDMODE_NONE);
+	bool ok = SDL_RenderTexture(r, src, &s, &d);
+	SDL_SetTextureBlendMode(src, SDL_BLENDMODE_BLEND);
+	return ok;
+}
+
+// ng_renderer_device returns the device r draws with, as its driver names
+// it: OpenGL's GL_RENDERER, or the Vulkan device's name; NULL for other
+// renderers. Call it on the thread that made r.
+const char *ng_renderer_device(SDL_Renderer *r) {
+	static char name[256];
+	const char *driver = SDL_GetRendererName(r);
+	if (!driver)
+		return NULL;
+	if (strcmp(driver, "opengl") == 0 || strcmp(driver, "opengles2") == 0) {
+		typedef const unsigned char *(*get_string_fn)(unsigned int);
+		get_string_fn get_string = (get_string_fn)SDL_GL_GetProcAddress("glGetString");
+		const unsigned char *s = get_string ? get_string(0x1F01) : NULL; // GL_RENDERER
+		if (!s)
+			return NULL;
+		SDL_strlcpy(name, (const char *)s, sizeof name);
+		return name;
+	}
+	if (strcmp(driver, "vulkan") == 0) {
+		SDL_PropertiesID p = SDL_GetRendererProperties(r);
+		void *instance = SDL_GetPointerProperty(p, SDL_PROP_RENDERER_VULKAN_INSTANCE_POINTER, NULL);
+		void *device = SDL_GetPointerProperty(p, SDL_PROP_RENDERER_VULKAN_PHYSICAL_DEVICE_POINTER, NULL);
+		typedef void *(*get_proc_fn)(void *, const char *);
+		typedef void (*get_props_fn)(void *, void *);
+		get_proc_fn get_proc = (get_proc_fn)SDL_Vulkan_GetVkGetInstanceProcAddr();
+		get_props_fn get_props = instance && device && get_proc
+			? (get_props_fn)get_proc(instance, "vkGetPhysicalDeviceProperties") : NULL;
+		if (!get_props)
+			return NULL;
+		// VkPhysicalDeviceProperties, without including the Vulkan headers
+		// for it: five 32-bit fields, the device name, then about 540
+		// bytes (UUID, limits, sparse properties). The rest is spare room.
+		// The Uint64 gives the 8-byte alignment the real struct has.
+		struct {
+			Uint32 api, driver, vendor, device, type;
+			char name[256];
+			Uint64 rest[256];
+		} props;
+		SDL_zero(props);
+		get_props(device, &props);
+		SDL_strlcpy(name, props.name, sizeof name);
+		return name;
+	}
+	return NULL;
 }
 
 float ng_pixel_density(SDL_Window *w) {

@@ -128,6 +128,35 @@ func decorate(p Painter, f *font.Set, a screen.Attr, x, y, w int, fg screen.Colo
 	}
 }
 
+// Mover is a painter that keeps what it painted and can move part of it.
+type Mover interface {
+	// MoveRect moves the w x h area at (x, y) by dy pixels down (up when
+	// dy is negative). What it leaves behind is repainted afterwards.
+	MoveRect(x, y, w, h, dy int)
+}
+
+// Scroll moves painted rows the way a grid_scroll moved their cells. Rows
+// are painted independently of each other (glyphs never leave their row),
+// so the moved pixels are exactly what repainting the rows would give, at
+// a fraction of the cost: scrolling one line repaints one row instead of
+// the whole window. See screen.TakeChanges.
+func Scroll(m Mover, f *font.Set, sc screen.Scroll) {
+	n := sc.Rows
+	if n < 0 {
+		n = -n
+	}
+	if n >= sc.Bot-sc.Top {
+		return // nothing stays in view
+	}
+	x, w := sc.Left*f.CellW, (sc.Right-sc.Left)*f.CellW
+	h := (sc.Bot - sc.Top - n) * f.CellH
+	if sc.Rows > 0 {
+		m.MoveRect(x, (sc.Top+n)*f.CellH, w, h, -n*f.CellH)
+	} else {
+		m.MoveRect(x, sc.Top*f.CellH, w, h, n*f.CellH)
+	}
+}
+
 // Padding fills the area right of and below the grid with the default
 // background, for windows that are not an exact multiple of the cell size.
 func Padding(p Painter, s *screen.Screen, f *font.Set, winW, winH int) {
