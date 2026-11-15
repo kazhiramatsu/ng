@@ -196,11 +196,12 @@ static const char *const *ng_fallback_first(void) {
 // missing from the configured fonts looks for one that has it, as Pango
 // does: fontconfig's order for a fallback request in the style, sorted
 // once. Sorting again for each character, with the character in the
-// request, took 2-3 ms per new character on macOS, and picked LastResort
-// for most scripts: fontconfig then favours the first font that has the
-// character and supports a language of the locale, and LastResort has
-// every character. Two changes make the order that of macOS itself (Core
-// Text):
+// request, took 142 µs per new character instead of 8.1 µs with 313 fonts
+// installed on Linux (BenchmarkNewCJKGlyphs, docs/latency.md) and 2-3 ms
+// on macOS, and there it picked LastResort for most scripts: fontconfig
+// then favours the first font that has the character and supports a
+// language of the locale, and LastResort has every character. Two changes
+// make the order that of macOS itself (Core Text):
 //
 //   - The families of ng_fallback_first come first.
 //   - LastResort comes last: macOS shows its boxes only when no other

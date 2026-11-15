@@ -143,6 +143,31 @@ func TestScrollRegionColumns(t *testing.T) {
 	}
 }
 
+// A scroll recorded before the grid shrinks names rows that are gone.
+func TestResizeDropsScrolls(t *testing.T) {
+	scroll := ev("grid_scroll", []any{int64(1), int64(0), int64(40), int64(0), int64(10), int64(1), int64(0)})
+	resize := ev("grid_resize", []any{int64(1), int64(10), int64(20)})
+	want := make([]int, 20)
+	for r := range want {
+		want[r] = r
+	}
+
+	s := New(10, 40)
+	s.TakeDirty()
+	apply(t, s, scroll, resize, ev("flush"))
+	if got := s.TakeDirty(); !reflect.DeepEqual(got, want) {
+		t.Errorf("TakeDirty: rows %v, want all 20", got)
+	}
+
+	s = New(10, 40)
+	s.TakeChanges()
+	apply(t, s, scroll, resize, ev("flush"))
+	scrolls, rows := s.TakeChanges()
+	if len(scrolls) != 0 || !reflect.DeepEqual(rows, want) {
+		t.Errorf("TakeChanges: scrolls %v, rows %v, want no scrolls and all 20 rows", scrolls, rows)
+	}
+}
+
 func TestResizeClearAndCursor(t *testing.T) {
 	s := New(4, 2)
 	apply(t, s, ev("grid_line", line(0, 0, cell("a"), cell("b"))),

@@ -140,7 +140,7 @@ func (s *Screen) resize(w, h int) {
 	s.Width, s.Height = w, h
 	s.cells = cells
 	s.dirty = make([]bool, h)
-	s.allDirty = true
+	s.MarkAllDirty()
 	s.CursorRow = min(s.CursorRow, h-1)
 	s.CursorCol = min(s.CursorCol, w-1)
 }
@@ -258,9 +258,11 @@ func (s *Screen) CurrentMode() Mode {
 // cell changed: redrawing whole rows is what keeps double-width glyphs
 // from leaving fragments.
 func (s *Screen) TakeDirty() []int {
-	for _, sc := range s.scrolls {
-		for r := sc.Top; r < sc.Bot; r++ {
-			s.dirty[r] = true
+	if !s.allDirty {
+		for _, sc := range s.scrolls {
+			for r := sc.Top; r < sc.Bot; r++ {
+				s.dirty[r] = true
+			}
 		}
 	}
 	_, rows := s.TakeChanges()
@@ -291,8 +293,12 @@ func (s *Screen) TakeChanges() (scrolls []Scroll, rows []int) {
 	return scrolls, rows
 }
 
-// MarkAllDirty forces a full redraw.
-func (s *Screen) MarkAllDirty() { s.allDirty = true }
+// MarkAllDirty forces a full redraw. Scrolls not taken yet are dropped:
+// their rows may no longer exist, and every row is repainted anyway.
+func (s *Screen) MarkAllDirty() {
+	s.allDirty = true
+	s.scrolls = nil
+}
 
 // TakeOptionChanges returns the UI options set since the last call.
 func (s *Screen) TakeOptionChanges() []string {
@@ -363,7 +369,7 @@ func (s *Screen) apply(name string, args []any) error {
 		for r := range s.cells {
 			s.cells[r] = blankRow(s.Width)
 		}
-		s.allDirty = true
+		s.MarkAllDirty()
 	case "grid_cursor_goto":
 		s.CursorRow = clamp(argInt(args, 1), 0, s.Height-1)
 		s.CursorCol = clamp(argInt(args, 2), 0, s.Width-1)
@@ -397,7 +403,7 @@ func (s *Screen) apply(name string, args []any) error {
 			s.colors[i] = s.resolve(a)
 		}
 		s.colorsChanged = true
-		s.allDirty = true
+		s.MarkAllDirty()
 	case "mode_info_set":
 		if len(args) >= 2 {
 			s.CursorStyleEnabled, _ = args[0].(bool)
@@ -499,7 +505,9 @@ func (s *Screen) gridScroll(top, bot, left, right, rows int) {
 			s.dirty[r] = true
 		}
 	}
-	s.scrolls = append(s.scrolls, Scroll{Top: top, Bot: bot, Left: left, Right: right, Rows: rows})
+	if !s.allDirty { // a full repaint needs no scrolls
+		s.scrolls = append(s.scrolls, Scroll{Top: top, Bot: bot, Left: left, Right: right, Rows: rows})
+	}
 }
 
 func clamp(v, lo, hi int) int { return max(lo, min(v, hi)) }

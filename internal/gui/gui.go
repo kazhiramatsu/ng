@@ -454,7 +454,7 @@ func (a *App) loop() error {
 		// at once after a final flush. Other events (the mouse) are
 		// handled meanwhile but do not delay it.
 		for a.drawn {
-			ms := waitMs(frame.Due(a.firstFlush, a.lastFlush, a.final))
+			ms := waitMs(a.frameDue(time.Now()))
 			if ms == 0 || C.ng_wait_timeout(&ev, C.int(ms)) == 0 {
 				break
 			}
@@ -469,6 +469,16 @@ func (a *App) loop() error {
 			a.present()
 		}
 	}
+}
+
+// frameDue returns when to present what was drawn. A frame drawn without
+// a flush (an image, the window shown at UIEnter, the busy cursor) waits
+// like a flush that arrived now and is not final.
+func (a *App) frameDue(now time.Time) time.Time {
+	if a.firstFlush.IsZero() {
+		a.firstFlush, a.lastFlush = now, now
+	}
+	return frame.Due(a.firstFlush, a.lastFlush, a.final)
 }
 
 // drain handles ev and every other pending event, then applies the queued
@@ -596,6 +606,11 @@ func (a *App) processRedraws() (drawn, closed bool, err error) {
 // frame): Neovim said it was idle before it, and after ng last sent it
 // anything, whose effects may otherwise still be on the way. The idle
 // notification is used once.
+//
+// Known limits (docs/latency.md): an ng_idle with no flush after it, from
+// an async wake-up just after ng wrote a key, makes that key's first flush
+// look final. Async redraws (:terminal output, timers) come as ng_idle and
+// a flush, so they are presented at once, not merged.
 func (a *App) takeFinal(at time.Time) bool {
 	idle := a.idleAt
 	a.idleAt = time.Time{}
@@ -833,12 +848,12 @@ func (a *App) destroyScreenTextures() {
 
 // onCPU reports whether an OpenGL or Vulkan device, as ng_renderer_device
 // names it, is a CPU implementation: Mesa's llvmpipe (OpenGL and Vulkan)
-// and softpipe, Google's SwiftShader, as in virtual machines without 3D
-// acceleration. There moving painted rows through moveTex costs far more
-// than painting them again: scrolling a 216x70 window one line every 8 ms
-// on llvmpipe presented 15 of 800 frames, half a second late, instead of
-// 170 (docs/latency.md, "Moving rows by renderer"). SDL's own software
-// renderer moves them well.
+// and softpipe, Google's SwiftShader, or a name with "software
+// rasterizer", as in virtual machines without 3D acceleration. There
+// moving painted rows through moveTex costs far more than painting them
+// again: scrolling a 216x70 window one line every 8 ms on llvmpipe
+// presented 230 of 800 frames, instead of 680 (docs/latency.md, "Moving
+// rows by renderer"). SDL's own software renderer moves them well.
 func onCPU(device string) bool {
 	d := strings.ToLower(device)
 	for _, s := range []string{"llvmpipe", "softpipe", "swiftshader", "software rasterizer"} {

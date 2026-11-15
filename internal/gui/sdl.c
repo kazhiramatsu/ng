@@ -207,13 +207,14 @@ const char *ng_renderer_device(SDL_Renderer *r) {
 			? (get_props_fn)get_proc(instance, "vkGetPhysicalDeviceProperties") : NULL;
 		if (!get_props)
 			return NULL;
-		// VkPhysicalDeviceProperties: five 32-bit fields, the device name,
-		// then limits and sparse properties (under 600 bytes), without
-		// including the Vulkan headers for it.
+		// VkPhysicalDeviceProperties, without including the Vulkan headers
+		// for it: five 32-bit fields, the device name, then about 540
+		// bytes (UUID, limits, sparse properties). The rest is spare room.
+		// The Uint64 gives the 8-byte alignment the real struct has.
 		struct {
 			Uint32 api, driver, vendor, device, type;
 			char name[256];
-			unsigned char rest[2048];
+			Uint64 rest[256];
 		} props;
 		SDL_zero(props);
 		get_props(device, &props);
