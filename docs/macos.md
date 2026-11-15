@@ -96,6 +96,12 @@ Devanagari Kohinoor Devanagari and emoji Apple Color Emoji (in one
 colour, like all text), the fonts Core Text picks. `TestMacFallbacks`
 checks this under Japanese, English and Korean.
 
+With the 2,800 fonts of this Mac, a new character took 2.5 ms before
+sorting once per style and 19.7 µs after (`BenchmarkNewCJKGlyphs`). The
+first screen of 6,700 distinct kanji (216x70) took 14.3 s before and
+0.45 s after, and scrolling those 300 lines at 120 Hz 44 s of CPU before
+and 2.1 s after.
+
 ## The window opened behind the terminal
 
 Started from iTerm2, ng's window appeared but iTerm2 stayed the active
@@ -165,6 +171,18 @@ ms: the frame dump below was still in `present`. Presenting the final
 flush at once (docs/latency.md) then took the key event to present from
 a median of 5.6 ms to 1.0 ms (frame 4.8 to 0.25 ms) with keys posted to
 ng.
+
+Scrolling a line every 8 ms, 216x70 (3024x1836 px), with all the changes
+of performance together: flush to present 5.26 to 0.20 ms, ng's CPU time
+0.93 to 0.57 s (user). With scrolled rows moved (docs/latency.md,
+"Moving rows by renderer") or repainted, median flush to present and
+ng's CPU time (user and system):
+
+| Renderer | moved | repainted |
+| --- | --- | --- |
+| Metal | 0.22 ms, 1.02 s | 0.42 ms, 1.14 s |
+| SDL software | 4.86 ms, 5.30 s | 4.65 ms, 5.07 s |
+| SDL software, 120x40 (1680x1080 px) | 1.74 ms, 2.23 s | 2.08 ms, 2.34 s |
 
 ## Tests
 
