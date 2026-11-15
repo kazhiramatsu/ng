@@ -445,7 +445,7 @@ func (a *App) loop() error {
 		// at once after a final flush. Other events (the mouse) are
 		// handled meanwhile but do not delay it.
 		for a.drawn {
-			ms := waitMs(frame.Due(a.firstFlush, a.lastFlush, a.final))
+			ms := waitMs(a.frameDue(time.Now()))
 			if ms == 0 || C.ng_wait_timeout(&ev, C.int(ms)) == 0 {
 				break
 			}
@@ -460,6 +460,16 @@ func (a *App) loop() error {
 			a.present()
 		}
 	}
+}
+
+// frameDue returns when to present what was drawn. A frame drawn without
+// a flush (an image, the window shown at UIEnter, the busy cursor) waits
+// like a flush that arrived now and is not final.
+func (a *App) frameDue(now time.Time) time.Time {
+	if a.firstFlush.IsZero() {
+		a.firstFlush, a.lastFlush = now, now
+	}
+	return frame.Due(a.firstFlush, a.lastFlush, a.final)
 }
 
 // drain handles ev and every other pending event, then applies the queued
