@@ -495,21 +495,20 @@ author's own config and plugins):
 - `queue`: the key event waiting in SDL's queue before ng handled it.
 - `nvim`: from sending the key to Neovim until its answer (flush)
   arrived, including the socket.
-- `frame`: from the flush to the present: painting and presenting, and
-  waiting for the rest of a burst of flushes. Neovim tells ng when it
-  has finished with a key (it is about to wait for input), and ng
-  presents that flush at once; otherwise, as while completing or with an
-  operator pending, ng waits until Neovim has been quiet for 4 ms (see
-  package `frame`: presenting earlier shows intermediate screens, such
-  as a blank command line).
+- `frame`: from the flush to the present: painting, presenting, and
+  waiting for the rest of a burst of flushes. When Neovim is about to
+  wait for input, ng presents its last flush at once; otherwise (while
+  completing, or with an operator pending) ng waits until Neovim has
+  been quiet for 4 ms (see package `frame`: presenting earlier shows
+  intermediate screens, such as a blank command line).
 
 Nine keystrokes in ten reach the screen within 8.5 ms, half of one
 60 Hz frame. The three samples over 20 ms were all Neovim's own work:
 `:` (106 ms in Neovim, entering the command line), `<CR>` running a
-command, and a mapping. This sample predates presenting finished frames
-at once, when every keystroke waited those 4 ms. That change took the
-median from key event to present from 5.6 ms to 1.0 ms, and `frame` from
-4.8 ms to 0.25 ms, in the measurements in docs/latency.md.
+command, and a mapping. This sample is older than presenting the last
+flush at once, so every keystroke waited those 4 ms. On Linux that
+change took the median from key event to present from 5.5 to 1.1 ms
+(docs/latency.md).
 
 Each frame is measured from the last key before Neovim answered: a key
 that changes nothing on screen (the start of a mapping, an operator

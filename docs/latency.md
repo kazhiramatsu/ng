@@ -48,134 +48,101 @@ done. Since then ng presents at once when Neovim says it is idle (below).
 
 ## Presenting the final flush at once
 
-2026-11-14, Neovim 0.12.6, measured on macOS 26 (Apple M5, ng's macOS port
-with the Metal renderer); nothing here depends on the platform.
+2026-11-15, Neovim 0.12.6.
 
 Where do the bursts come from? Traces of everyday commands, typed over
-one RPC channel as ng types them (a script writing `nvim_input`
-notifications to `--listen`'s socket), grouped by keystroke:
+one RPC channel as ng types them (a script writing `nvim_input` to
+`--listen`'s socket), show:
 
-- **Normal mode:** almost every command flushes twice. With 'showcmd' (on
-  by default) `normal_cmd` shows the key in the corner and calls
-  `ui_flush()` before running the command; the second flush clears it
-  and has the result. The gap is the command's own time: 0.02-0.4 ms for
-  `j` or `w`, 1-3 ms for `<C-d>`, `o` or `<C-w>v`.
-- **Search with 'incsearch':** the typed character with `busy_start`,
-  then the matches 2-4 ms later.
-- **Completion** (`<C-n>`, `<Tab>` on the command line): "-- Searching..."
-  or a blanked command line, then the result 0.1-3 ms later.
+- **Normal mode:** with 'showcmd' (on by default) a command flushes
+  twice: first the key shown in the corner, then the result 0.02-3 ms
+  later.
+- **Search with 'incsearch':** the typed character, then the matches
+  2-4 ms later.
+- **Completion:** "-- Searching..." or a blank command line, then the
+  result 0.1-3 ms later.
 
-So the 4 ms wait mostly waited for flushes that were already there after
-0.2 ms. Neovim triggers SafeState when nothing is pending and it is
-about to wait for input, and its last flush comes right after (it
-flushes before blocking). ng's bootstrap sends `ng_idle` from SafeState
-(`nvim.IdleNotification`), and the flush after it is presented at once
-(package `frame`). In the traces every burst with SafeState ended with
-`idle flush`; there was never a flush after it. SafeState is not
-triggered while completion is active, an operator or a mapping is
-pending, or keys are still queued: there ng waits as before.
+So the 4 ms wait mostly waited for flushes that were already there.
+Neovim triggers SafeState when it is about to wait for input, and its
+last flush comes right after. ng's bootstrap sends `ng_idle` from
+SafeState (`nvim.IdleNotification`), and ng presents the next flush at
+once (package `frame`). There is no SafeState while completion is
+active, an operator or a mapping is pending, or keys are queued; then
+ng waits as before.
 
-Two traps on the way:
+Two traps:
 
-- **Test drivers make extra SafeStates.** Keys fed from a Lua timer or
-  with `nvim --remote-send` (a new channel per key) trigger SafeState
-  for the timer or the channel itself, before the key is read, and the
-  showcmd flush then looked final. Only a driver that writes
-  `nvim_input` on one open channel, as ng does, gives the real order.
-- **A stale `ng_idle`.** A timer that changes nothing still sends one,
-  with no flush after it. ng ignores an `ng_idle` that arrived before its
-  last write to Neovim (`rpc.Client.LastWrite`) or more than `MaxDelay`
-  before the flush, so the next keystroke's showcmd flush is not taken
-  for final.
+- Keys fed from a Lua timer or with `nvim --remote-send` trigger an
+  extra SafeState before the key is read. Only `nvim_input` on one open
+  channel, as ng sends it, shows the real order.
+- A timer that changes nothing still sends `ng_idle`, with no flush
+  after it. ng ignores an `ng_idle` from before its last write to Neovim
+  (`rpc.Client.LastWrite`) or more than `MaxDelay` before the flush.
 
-`TestIdleComesBeforeTheFinalFlush` checks the order against Neovim stable
-and nightly every day.
+`TestIdleComesBeforeTheFinalFlush` checks the order against Neovim
+stable and nightly every day.
 
-Results (`ng --trace`, the last flush of each burst to its present):
+Results on Linux (Ubuntu 26.04 in VirtualBox, OpenGL on its 3D
+acceleration; see "Moving rows by renderer"):
 
-| | before | after |
+| Median (ms) | before | after |
 | --- | --- | --- |
-| Everyday commands, 120x40, median / p90 (ms) | 5.00 / 5.90 | 0.41 / 1.38 |
-| Scrolling a line every 8 ms, 216x70 (3024x1836 px) | 5.26 / 5.38 | 0.20 / 0.26 |
-| `<C-f>` / `<C-b>` every 16 ms, 216x70 | 5.21 / 5.55 | 0.38 / 0.68 |
-
-With real keystrokes (key events posted to ng's process, 91 keys of
-everyday editing per run, two runs each, 120x40), ng's own summary:
-
-| `--trace` summary, median (p90), ms | before | after |
-| --- | --- | --- |
-| total: key event to present | 5.57 (6.8-7.3) | 1.02 (2.5-2.8) |
-| frame: flush to present | 4.83 (5.1) | 0.25 (0.6) |
-| nvim | 0.43 | 0.44 |
-
-The scrolling numbers also include moving the painted rows instead of
-repainting them (`paint.Scroll`, `screen.TakeChanges`): one line of
-scrolling repaints one row, not 68. ng's CPU time for the same scrolling
-went from 0.93 to 0.57 s (user) with this and the faster painting
-together; "Moving rows by renderer" below has the share of moving rows.
+| Real X key events (xdotool, 95 keys, 120x40): key event to present | 5.5 | 1.1 |
+| Everyday commands over RPC (120x40): last flush to present | 5.2 | 0.7 |
+| Scrolling a line every 8 ms (216x70): flush to present | 5.2 | 0.7 |
+| `<C-f>` / `<C-b>` every 16 ms (216x70): flush to present | 5.2 | 0.7 |
 
 ## Moving rows by renderer
 
-Moving painted rows copies them through a second texture (SDL cannot
-draw a texture onto itself). Scrolling one line every 8 ms, 216x70 cells
-unless said otherwise, with rows moved or, with that turned off,
-repainted (median flush to present; ng's CPU time, user and system, or
-the frames presented):
+A scroll repainted every row of its region. Rows are painted
+independently, so now the painted rows move with their cells
+(`screen.TakeChanges`, `paint.Scroll`). The GUI copies them through a
+second texture, since SDL cannot draw a texture onto itself.
+
+Scrolling a line every 8 ms, 216x70 (1944x1260 px, 800 flushes), with
+rows moved or repainted. Median flush to present, and ng's CPU time
+(user and system) or the frames presented:
 
 | Renderer | moved | repainted |
 | --- | --- | --- |
-| Metal (macOS, Apple M5, 3024x1836 px) | 0.22 ms, 1.02 s | 0.42 ms, 1.14 s |
-| OpenGL on a virtual GPU (VirtualBox), 1944x1260 px | 0.18 ms, 0.55 s | 0.37 ms, 0.75 s |
-| SDL software, macOS, 120x40 cells, 1680x1080 px | 1.74 ms, 2.23 s | 2.08 ms, 2.34 s |
-| SDL software, macOS, 3024x1836 px | 4.86 ms, 5.30 s | 4.65 ms, 5.07 s |
-| SDL software, Linux VM, 1944x1260 px | 10.7 ms, 336 frames | 15.3 ms, 233 frames |
-| OpenGL on llvmpipe, Linux VM | 552 ms, 15 frames | 19 ms, 174 frames |
-| Vulkan on lavapipe, Linux VM | 940 ms, 9 frames | 300 ms, 18 frames |
+| OpenGL on a virtual GPU | 0.16 ms, 0.51 s | 0.36 ms, 0.68 s |
+| SDL software | 6.5 ms, 540 frames | 7.5 ms, 450 frames |
+| OpenGL on llvmpipe | 13 ms, 230 frames | 5.3 ms, 680 frames |
+| Vulkan on lavapipe | 60 ms, 60 frames | 9.2 ms, 370 frames |
 
-(800 flushes each; the Linux VM is Ubuntu 26.04 in UTM on the same Mac,
-on Xvfb, where OpenGL and Vulkan are Mesa's CPU implementations, as in
-virtual machines without 3D acceleration. Shougo/ng main presented 88
-frames there on OpenGL, 39 ms late. The virtual GPU is Ubuntu 26.04 in
-VirtualBox 7.2 with 3D acceleration, on Xorg: Mesa's SVGA3D driver hands
-OpenGL to VirtualBox, which draws with the Mac's GPU, so ng's CPU time
-there leaves that work out. Moved or repainted, 797 to 800 of the 800
-flushes were presented, and OpenGL ES 2 gave the same times; Shougo/ng
-main presented them 5.15 ms late, the 4 ms wait.)
+The machine is Ubuntu 26.04 in VirtualBox 7.2 on an Apple M5 Mac. The
+virtual GPU is VirtualBox's 3D acceleration, on Xorg: Mesa's SVGA3D
+driver hands OpenGL to the host's GPU, so ng's CPU time leaves that work
+out. The other rows run on Xvfb, where OpenGL and Vulkan are Mesa's CPU
+implementations, as in virtual machines without 3D acceleration.
 
-On a GPU, moving halves the time to present. With SDL's own software
-renderer it is about even. With OpenGL or Vulkan running on the CPU the
-two full-window copies, and the render target switches between them,
-cost far more than painting the rows: ng fell behind Neovim and showed
-a frame every half second. ng asks the renderer for its device
-(`ng_renderer_device`: OpenGL's `GL_RENDERER`, the Vulkan device's name)
-and repaints the rows when it is llvmpipe, softpipe or SwiftShader
-(`onCPU` in package gui; the trace says which).
-
-Key event to present on the same Linux VM, real X key events from
-xdotool, 95 keystrokes: median 10.6 to 6.0 ms with the software renderer
-and 7.8 to 3.2 ms with OpenGL on llvmpipe, from Shougo/ng main to this.
-On the virtual GPU: 5.25 to 0.95 ms with OpenGL and 5.34 to 0.90 ms
-with OpenGL ES, as on macOS.
+On a GPU, moving halves the time to present. With SDL's software
+renderer it is a little faster. On llvmpipe and lavapipe the two
+full-window copies cost more than painting the rows, and ng fell behind
+Neovim. So ng asks the renderer for its device (`ng_renderer_device`:
+`GL_RENDERER` or the Vulkan device name) and repaints when it is
+llvmpipe, softpipe or SwiftShader (`onCPU` in package gui; the trace
+says which).
 
 ## New characters
 
-Scrolling a file of distinct kanji (100 new characters a line) froze ng:
-44 s of CPU for 300 lines, and no frame between the first one and the
-end. Each character missing from 'guifont' was looked up with
-`FcFontSort`, which scores and sorts every installed font: 2.5 ms per
-character with the 2,800 fonts of the Mac above. A screen of Japanese
-text has hundreds of characters ng has not drawn yet.
+Each character missing from 'guifont' was looked up with `FcFontSort`,
+which scores and sorts every installed font. A screen of Japanese text
+can have hundreds of characters ng has not drawn yet, and the cost grows
+with the number of fonts.
 
 ng now sorts once per style and walks that list for each new character
 (package font, `ng_fallbacks_t`; on macOS in an order of its own, see
-docs/macos.md, "Fallback fonts"):
+docs/macos.md, "Fallback fonts"), as Pango does. `BenchmarkNewCJKGlyphs`
+(lookup and rasterizing, per character) on Ubuntu 26.04:
 
-| | before | after |
+| Fonts installed | before | after |
 | --- | --- | --- |
-| `BenchmarkNewCJKGlyphs` (lookup and rasterizing) | 2.52 ms | 19.7 µs |
-| First screen of 6,700 distinct kanji, 216x70 | 14.3 s | 0.45 s |
-| Scrolling those 300 lines at 120 Hz, CPU | 44 s | 2.1 s user |
+| 11 (DejaVu, IPAGothic) | 43 µs | 2.7 µs |
+| 313 (with Noto) | 142 µs | 8.1 µs |
 
-While scrolling, ng now waits for Neovim 61% of the time; uploading the
-new glyphs to the atlas (one `SDL_UpdateTexture` each) and rasterizing
-them take most of the rest.
+The font picked can change. Of 66 test characters, with Noto and a
+Japanese locale, six symbols (⚠ ∑ ≤ █ ▒ ™) now come from DejaVu Sans
+Mono instead of Noto Sans CJK; with an English locale, Hebrew comes from
+Noto Sans Hebrew instead of DejaVu Sans. Kanji, kana, Hangul and emoji
+did not change.
