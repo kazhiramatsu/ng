@@ -12,6 +12,7 @@ func TestOnCPU(t *testing.T) {
 		{"llvmpipe (LLVM 21.1.8, 128 bits)", true}, // Mesa, OpenGL and Vulkan
 		{"softpipe", true},
 		{"SwiftShader Device (Subzero)", true},
+		{"Mesa X11 Software Rasterizer", true},
 		{"Mesa Intel(R) UHD Graphics 620 (KBL GT2)", false},
 		{"AMD Radeon RX 6600 (radeonsi, navi23, LLVM 17.0.6, DRM 3.54, 6.6.10)", false},
 		{"NVIDIA GeForce RTX 3060/PCIe/SSE2", false},

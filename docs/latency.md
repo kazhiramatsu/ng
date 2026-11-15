@@ -79,11 +79,20 @@ Two traps:
   after it. ng ignores an `ng_idle` from before its last write to Neovim
   (`rpc.Client.LastWrite`) or more than `MaxDelay` before the flush.
 
-`TestIdleComesBeforeTheFinalFlush` checks the order against Neovim
-stable and nightly every day.
+Two known limits:
 
-Results on Linux (Ubuntu 26.04 in VirtualBox, OpenGL on its 3D
-acceleration; see "Moving rows by renderer"):
+- An `ng_idle` from an async wake-up that redraws nothing has no flush
+  after it. If it arrives just after ng writes a key, that key's first
+  flush can be taken for final.
+- Async redraws, such as `:terminal` output or timers, arrive as
+  `ng_idle` and a flush. They are presented at once, without the 4 to
+  16 ms merging.
+
+`TestIdleComesBeforeTheFinalFlush` checks the order against Neovim
+stable and nightly in the daily CI run.
+
+Results on Linux (Ubuntu 26.04 in VirtualBox with 3D acceleration:
+OpenGL on Mesa's SVGA3D, on Xorg):
 
 | Median (ms) | before | after |
 | --- | --- | --- |

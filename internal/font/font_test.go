@@ -114,12 +114,14 @@ func TestFallbackFitsCells(t *testing.T) {
 // fallback order that has it, a font found once for each character.
 func TestFallbackHasTheCharacter(t *testing.T) {
 	s := newTestSet(t)
+	found := 0
 	for _, r := range "あ漢한ЖλΣ→★①─█⠿😀Ք" {
 		for _, style := range []Style{0, Bold, Italic, Bold | Italic} {
 			f := s.fallback(r, style)
 			if f == nil {
 				continue // no font has it here
 			}
+			found++
 			if !hasChar(f, r) {
 				t.Errorf("%c (style %d): %s does not have it", r, style, f.path)
 			}
@@ -127,6 +129,9 @@ func TestFallbackHasTheCharacter(t *testing.T) {
 				t.Errorf("%c (style %d): %s, then %s", r, style, f.path, again.path)
 			}
 		}
+	}
+	if found == 0 {
+		t.Error("no fallback font for any of the characters")
 	}
 }
 

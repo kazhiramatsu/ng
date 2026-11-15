@@ -112,7 +112,8 @@ static int ng_match(const char *family, int bold, int italic, ng_match_t *out) {
 // missing from the configured fonts looks for one that has it, as Pango
 // does: fontconfig's order for a fallback request in the style, sorted
 // once. Sorting again for each character, with the character in the
-// request, took 2-3 ms per new character with 2,800 fonts installed.
+// request, took 142 µs per new character instead of 8.1 µs with 313 fonts
+// installed (BenchmarkNewCJKGlyphs, docs/latency.md).
 typedef struct {
 	FcPattern *pat;   // the request
 	FcFontSet *fonts; // in order
