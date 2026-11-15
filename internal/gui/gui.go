@@ -66,7 +66,7 @@ type App struct {
 	texH      int
 	atlasTex  *C.SDL_Texture
 	packer    *atlas.Packer
-	glyphs    map[*font.Glyph]rect
+	glyphs    []rect // place in the atlas by font.Glyph.ID; w == 0: none yet
 	upload    []byte
 
 	fonts      *font.Set
@@ -147,8 +147,7 @@ func (a *App) post(f func()) {
 // New prepares an App for a connection that has not attached yet. Redraw
 // notifications must be passed to Enqueue.
 func New() *App {
-	return &App{glyphs: map[*font.Glyph]rect{}, focused: true, vars: map[string]any{},
-		imageTex: map[uint32]imageTexture{}}
+	return &App{focused: true, vars: map[string]any{}, imageTex: map[uint32]imageTexture{}}
 }
 
 // Enqueue is the redraw notification handler. It runs on the RPC reader
@@ -879,8 +878,11 @@ func (a *App) FillRect(x, y, w, h int, c screen.Color) {
 // DrawGlyph implements paint.Painter. Glyph quads are batched and drawn
 // with one SDL_RenderGeometry call per flushGlyphs.
 func (a *App) DrawGlyph(g *font.Glyph, x, y int, c screen.Color) {
-	r, ok := a.glyphs[g]
-	if !ok {
+	var r rect
+	if g.ID < len(a.glyphs) {
+		r = a.glyphs[g.ID]
+	}
+	if r.w == 0 { // not in the atlas yet (glyphs drawn are never empty)
 		px, py, fits := a.packer.Alloc(g.W, g.H)
 		if !fits {
 			// Atlas full: draw what is queued, then start over.
@@ -894,7 +896,10 @@ func (a *App) DrawGlyph(g *font.Glyph, x, y int, c screen.Color) {
 		C.ng_update(a.atlasTex, C.int(px), C.int(py), C.int(g.W), C.int(g.H),
 			unsafe.Pointer(&a.upload[0]), C.int(g.W*4))
 		r = rect{px, py, g.W, g.H}
-		a.glyphs[g] = r
+		if g.ID >= len(a.glyphs) {
+			a.glyphs = append(a.glyphs, make([]rect, g.ID+1-len(a.glyphs))...)
+		}
+		a.glyphs[g.ID] = r
 	}
 	cr, cg, cb := c.RGB()
 	col := C.SDL_FColor{r: C.float(cr) / 255, g: C.float(cg) / 255, b: C.float(cb) / 255, a: 1}

@@ -78,7 +78,8 @@ type Screen struct {
 
 	CursorRow, CursorCol int
 
-	attrs                map[int]Attr
+	attrs                []Attr       // by highlight id
+	colors               []cellColors // attrs resolved, by highlight id
 	DefaultFG, DefaultBG Color
 	DefaultSP            Color
 	CursorStyleEnabled   bool
@@ -106,7 +107,6 @@ func (s *Screen) ResetGraphics() { s.Graphics = kitty.New() }
 // New returns a screen of the given size.
 func New(width, height int) *Screen {
 	s := &Screen{
-		attrs:         map[int]Attr{},
 		DefaultFG:     0xffffff,
 		DefaultBG:     0x000000,
 		DefaultSP:     0xff0000,
@@ -165,30 +165,58 @@ func (s *Screen) CellWidth(row, col int) int {
 
 // Attr returns the highlight for id. Unknown ids use the defaults.
 func (s *Screen) Attr(id int) Attr {
-	if a, ok := s.attrs[id]; ok {
-		return a
+	if id >= 0 && id < len(s.attrs) {
+		return s.attrs[id]
 	}
 	return defaultAttr
 }
 
-// Colors resolves the foreground, background and special colors of a
-// highlight, applying defaults and reverse.
+// Colors returns the foreground, background and special colors of a
+// highlight, with defaults and reverse applied. Painting asks for every
+// cell, so they are kept resolved (see setAttr).
 func (s *Screen) Colors(id int) (fg, bg, sp Color) {
-	a := s.Attr(id)
-	fg, bg, sp = a.FG, a.BG, a.SP
-	if fg == Default {
-		fg = s.DefaultFG
+	c := s.resolve(defaultAttr)
+	if id >= 0 && id < len(s.colors) {
+		c = s.colors[id]
 	}
-	if bg == Default {
-		bg = s.DefaultBG
+	return c.fg, c.bg, c.sp
+}
+
+// cellColors are the colors of a highlight as Colors returns them.
+type cellColors struct{ fg, bg, sp Color }
+
+func (s *Screen) resolve(a Attr) cellColors {
+	c := cellColors{a.FG, a.BG, a.SP}
+	if c.fg == Default {
+		c.fg = s.DefaultFG
 	}
-	if sp == Default {
-		sp = s.DefaultSP
+	if c.bg == Default {
+		c.bg = s.DefaultBG
+	}
+	if c.sp == Default {
+		c.sp = s.DefaultSP
 	}
 	if a.Reverse {
-		fg, bg = bg, fg
+		c.fg, c.bg = c.bg, c.fg
 	}
-	return fg, bg, sp
+	return c
+}
+
+// maxAttrID bounds the highlight table against a corrupt id. Neovim
+// numbers highlights from 1 and reuses them.
+const maxAttrID = 1 << 20
+
+// setAttr defines highlight id, keeping its colors resolved.
+func (s *Screen) setAttr(id int, a Attr) {
+	if id < 0 || id >= maxAttrID {
+		return
+	}
+	for len(s.attrs) <= id {
+		s.attrs = append(s.attrs, defaultAttr)
+		s.colors = append(s.colors, s.resolve(defaultAttr))
+	}
+	s.attrs[id] = a
+	s.colors[id] = s.resolve(a)
 }
 
 // CursorColors returns the colors for drawing the cursor over a cell with
@@ -336,11 +364,14 @@ func (s *Screen) apply(name string, args []any) error {
 			return fmt.Errorf("short args")
 		}
 		m, _ := args[1].(map[string]any)
-		s.attrs[argInt(args, 0)] = parseAttr(m)
+		s.setAttr(argInt(args, 0), parseAttr(m))
 	case "default_colors_set":
 		s.DefaultFG = toColor(args, 0, 0xffffff)
 		s.DefaultBG = toColor(args, 1, 0x000000)
 		s.DefaultSP = toColor(args, 2, 0xff0000)
+		for i, a := range s.attrs {
+			s.colors[i] = s.resolve(a)
+		}
 		s.colorsChanged = true
 		s.allDirty = true
 	case "mode_info_set":
