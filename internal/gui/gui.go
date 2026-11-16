@@ -271,7 +271,7 @@ func (a *App) createRenderer() error {
 	if a.ren == nil {
 		return sdlError("SDL_CreateRenderer")
 	}
-	C.ng_low_latency(a.ren)
+	lowLatency(a.ren)
 	if a.atlasTex = C.ng_create_texture(a.ren, C.SDL_TEXTUREACCESS_STATIC, atlasSize, atlasSize); a.atlasTex == nil {
 		return sdlError("atlas texture")
 	}

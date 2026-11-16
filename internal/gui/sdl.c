@@ -3,9 +3,6 @@
 #include <string.h>
 #include "sdl.h"
 #include <SDL3/SDL_vulkan.h>
-#ifdef SDL_PLATFORM_MACOS
-#include <objc/message.h>
-#endif
 
 // The modifiers that change the character a key types: Shift, CapsLock and
 // AltGr, and on macOS Option, which types characters such as "@" or "\" on
@@ -229,22 +226,6 @@ const char *ng_renderer_device(SDL_Renderer *r) {
 		return name;
 	}
 	return NULL;
-}
-
-// ng_low_latency makes Metal keep two drawables instead of three. With
-// three, the window server showed a frame two refreshes after it was
-// presented (16 to 25 ms at 120 Hz, by the drawable's presentedTime), and
-// handing out the next drawable blocked whenever frames came faster than
-// the display. With two it takes a frame at once (docs/macos.md,
-// "Latency"). A no-op with other renderers.
-void ng_low_latency(SDL_Renderer *r) {
-#ifdef SDL_PLATFORM_MACOS
-	// The CAMetalLayer, set through the Objective-C runtime to keep this
-	// file C: layer.maximumDrawableCount = 2.
-	id layer = (id)SDL_GetRenderMetalLayer(r);
-	if (layer)
-		((void (*)(id, SEL, unsigned long))objc_msgSend)(layer, sel_registerName("setMaximumDrawableCount:"), 2);
-#endif
 }
 
 float ng_pixel_density(SDL_Window *w) {

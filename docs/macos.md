@@ -12,6 +12,22 @@ driver is "cocoa"), so the hint is now set on Linux only. Shougo/ng has
 since made both changes itself (5e82bb9), so that macOS forks can follow
 it with fewer conflicts.
 
+## Where the macOS code is
+
+The macOS code is kept in files of its own where it can, as Shougo/ng
+does in package detach (`sys_linux.go`, `sys_darwin.go`): a file for
+each system defines the same names, and the shared code only calls them.
+Merges from Shougo/ng then rarely meet the macOS code.
+
+| Files | What differs on macOS |
+| --- | --- |
+| `internal/font/font_darwin.go`, `font_linux.go` | Font names (`loadFamily`) and the order of fallback fonts (`reorder`) |
+| `internal/gui/renderer_darwin.go`, `renderer_linux.go` | SDL_Renderer on Metal: two drawables (`lowLatency`), presenting again after a resize (`presentAgainLater`) |
+
+Keys, the trackpad and font sizes in points are still in shared files
+(`gui.go`, `sdl.c`, `input.go`), behind `macOS` or
+`#ifdef SDL_PLATFORM_MACOS`.
+
 ## The default font
 
 With 'guifont' empty, "monospace" was Hiragino Maru Gothic, a font with
@@ -41,9 +57,15 @@ fc-list | grep SFNSMono               # .SF NS Mono, with Bold and Italic instan
 ```
 
 On macOS ng now looks for "monospace" as Menlo and "SF Mono" as
-".SF NS Mono" (`ng_alias` in package font), after the name itself, so a
-font installed under that name still wins. FreeType renders the hidden
-font's named instances (Regular, Bold, Italic) as real faces.
+".SF NS Mono" (`loadFamily` in `font_darwin.go`); a font installed as
+"SF Mono" still wins. FreeType renders the hidden font's named instances
+(Regular, Bold, Italic) as real faces.
+
+"monospace" is always Menlo, as in MacVim, which does not use fontconfig
+(its default is Menlo 11). A rule for "monospace" in a fontconfig
+configuration does not change it. Until 2026-11-16 ng asked fontconfig
+for "monospace" and Menlo together, so a rule with binding "same" or
+"strong" won, and one with the default binding did not.
 
 Sizes: macOS applications take a point as one unit of window coordinates
 (72 dpi), not GTK's 96, so ng does too there. Menlo 11 is then as large
@@ -377,7 +399,7 @@ small), a real drag, and the time on the glass (that needs a camera).
 - `TestMacFamilies` checks the aliases above. The worst case needed a
   Japanese locale, and fontconfig reads the language once per process, so
   `TestMacFamiliesJapanese` runs it again with `FC_LANG=ja` (CI runs in
-  English). Without `ng_alias` both fail: "monospace" is Andale Mono, or
+  English). Without `loadFamily` both fail: "monospace" is Andale Mono, or
   Hiragino Maru Gothic in the Japanese process with fontconfig 2.17, and
   "SF Mono" is not found.
 
