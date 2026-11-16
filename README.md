@@ -11,6 +11,8 @@ The name has several meanings: **N**ew **G**UI, **N**eovim **G**UI,
 **N**eovim in **G**o, and "NG" (no good): most features are deliberately
 not implemented.
 
+![ng editing Go code and Japanese text, with a floating window of Nerd Font icons](docs/screenshots/edit.png)
+
 ## What ng promises
 
 ng does not compete on features. It competes on **working**.
@@ -119,6 +121,8 @@ image scrolled out of its window is gone, like its text. Not yet
 supported: images below the text (negative `zindex` is drawn on top),
 and kitty features Neovim does not use (files, shared memory,
 compression, animation, Unicode placeholders).
+
+![The ng icon placed with vim.ui.img next to Japanese text](docs/screenshots/image.png)
 
 ## Requirements
 
@@ -367,6 +371,8 @@ text-input protocol) through SDL:
   switched off; to keep it active in every mode, set
   `let g:ng_ime_insert_only = 0`.
 
+![Japanese being converted with Fcitx 5 under Wayland: the preedit is drawn in the grid at the cursor](docs/screenshots/ime.png)
+
 ng does not switch the input method itself on or off: that is specific
 to each input method. To turn Fcitx 5 off when leaving Insert mode, as
 GVim does, add to your config (it works in a terminal too):
@@ -606,6 +612,9 @@ installs on Linux (the Type 1 Courier 10 Pitch, IPAGothic) and use Menlo
 and Hiragino Sans where those are missing. The Nerd Font tests need UDEV
 Gothic NF (`brew install --cask font-udev-gothic-nf` on macOS) and are
 skipped without it, as in CI.
+
+The screenshots in this README are taken with a minimal config, as
+described in [docs/screenshots/](docs/screenshots/README.md).
 
 The screen model and the painter do not depend on SDL, so drawing is
 tested by painting into images: for example, after an SKK-style
