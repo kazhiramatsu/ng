@@ -249,7 +249,7 @@ func (a *App) Run(connect Connector, opt Options) error {
 		return sdlError("SDL_CreateRenderer")
 	}
 	defer C.SDL_DestroyRenderer(a.ren)
-	lowLatency(a.ren)
+	setUpRenderer(a.ren)
 	if a.atlasTex = C.ng_create_texture(a.ren, C.SDL_TEXTUREACCESS_STATIC, atlasSize, atlasSize); a.atlasTex == nil {
 		return sdlError("atlas texture")
 	}
@@ -1098,7 +1098,7 @@ func (a *App) handle(e event) bool {
 			a.settleAt = time.Now().Add(settleDelay)
 		}
 		a.paintDirty()
-		a.presentAgainLater()
+		a.afterResize()
 		return true
 	case C.SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
 		if err := a.loadFonts(a.scr.OptionString("guifont"), a.scr.OptionString("guifontwide"),

@@ -3,8 +3,12 @@ package gui
 // #include "sdl.h"
 import "C"
 
-// SDL_Renderer needs no changes on Linux (see renderer_darwin.go).
+// SDL_Renderer needs no help on Linux. These are in a file for Linux so
+// that a macOS fork can define its own in renderer_darwin.go, for what
+// macOS needs.
 
-func lowLatency(*C.SDL_Renderer) {}
+// setUpRenderer is called once the renderer is made.
+func setUpRenderer(*C.SDL_Renderer) {}
 
-func (a *App) presentAgainLater() {}
+// afterResize is called after the window size changed.
+func (a *App) afterResize() {}
