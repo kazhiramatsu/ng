@@ -23,6 +23,7 @@ Merges from Shougo/ng then rarely meet the macOS code.
 | --- | --- |
 | `internal/font/font_darwin.go`, `font_linux.go` | Font names (`loadFamily`) and the order of fallback fonts (`reorder`) |
 | `internal/gui/renderer_darwin.go`, `renderer_linux.go` | SDL_Renderer on Metal: two drawables (`lowLatency`), presenting again after a resize (`presentAgainLater`) |
+| `internal/gui/metal_darwin.go`, `metal_darwin.m`, `liveresize_darwin.go`, `renderer.go` | ng's own Metal renderer, picked by `createWindow` and `ownRenderer` in `renderer_darwin.go` (`renderer_linux.go` keeps SDL_Renderer) |
 
 Keys, the trackpad and font sizes in points are still in shared files
 (`gui.go`, `sdl.c`, `input.go`), behind `macOS` or
@@ -283,7 +284,9 @@ renderer, so ng does not draw during a live resize.
 On macOS ng draws with a Metal renderer of its own (`metal_darwin.go`,
 `metal_darwin.m`). SDL still makes the window and handles the keyboard,
 the mouse and the input method. `NG_RENDERER=sdl` in the environment
-selects SDL_Renderer again. Linux is unchanged.
+selects SDL_Renderer again. Linux is unchanged. `ownRenderer` in
+`renderer_darwin.go` picks the renderer; `renderer_linux.go` has the
+same functions for SDL_Renderer.
 
 How it draws:
 

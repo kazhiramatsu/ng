@@ -238,7 +238,10 @@ func (a *App) Run(connect Connector, opt Options) error {
 	defer C.SDL_Quit()
 	a.mark("sdl initialized (video driver " + C.GoString(C.SDL_GetCurrentVideoDriver()) + ")")
 
-	if a.win = a.createWindow(); a.win == nil {
+	title := C.CString("ng")
+	a.win = a.createWindow(title, 800, 600)
+	C.free(unsafe.Pointer(title))
+	if a.win == nil {
 		return sdlError("SDL_CreateWindow")
 	}
 	defer C.SDL_DestroyWindow(a.win)

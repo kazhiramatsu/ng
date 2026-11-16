@@ -7,7 +7,8 @@ import (
 )
 
 // renderer draws the window in place of SDL_Renderer. The only one is
-// ng's Metal renderer on macOS (metal_darwin.go); elsewhere, and with
+// ng's Metal renderer on macOS (metal_darwin.go), which ownRenderer
+// returns (renderer_darwin.go); on Linux (renderer_linux.go), and with
 // NG_RENDERER=sdl in the environment, App draws with SDL_Renderer.
 type renderer interface {
 	name() string

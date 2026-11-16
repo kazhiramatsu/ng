@@ -12,7 +12,6 @@ import "C"
 import (
 	"image"
 	"image/draw"
-	"os"
 	"unsafe"
 
 	"github.com/Shougo/ng/internal/atlas"
@@ -85,36 +84,6 @@ func newMetal(win *C.SDL_Window, atlasSize, atlasMax int) *metal {
 		packer:    atlas.NewPacker(atlasSize, atlasSize),
 		imageTex:  map[uint32]metalImage{},
 	}
-}
-
-// sdlRenderer reports whether the environment asks for SDL_Renderer
-// instead of ng's Metal renderer, with NG_RENDERER=sdl.
-func sdlRenderer() bool { return os.Getenv("NG_RENDERER") == "sdl" }
-
-// createWindow creates the hidden window, for Metal unless SDL_Renderer is
-// to draw.
-func (a *App) createWindow() *C.SDL_Window {
-	title := C.CString("ng")
-	defer C.free(unsafe.Pointer(title))
-	if sdlRenderer() {
-		return C.ng_create_window(title, 800, 600)
-	}
-	return C.ng_metal_create_window(title, 800, 600)
-}
-
-// ownRenderer returns ng's Metal renderer for the window, or nil when
-// SDL_Renderer is to draw: it was asked for, or Metal is not available.
-func (a *App) ownRenderer() renderer {
-	if sdlRenderer() {
-		return nil
-	}
-	m := newMetal(a.win, metalAtlasSize, metalAtlasMaxSize)
-	if m == nil {
-		return nil
-	}
-	live = a
-	C.ng_metal_watch_live_resize(m.m)
-	return m
 }
 
 func (m *metal) name() string { return "ng metal, " + C.GoString(C.ng_metal_device(m.m)) }
