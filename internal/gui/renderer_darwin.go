@@ -33,8 +33,9 @@ import (
 // latency or left a stale frame on the screen. renderer_linux.go has the
 // same functions, doing nothing.
 
-// lowLatency makes the renderer keep two drawables (ng_low_latency).
-func lowLatency(r *C.SDL_Renderer) { C.ng_low_latency(r) }
+// setUpRenderer is called once the renderer is made: it makes Metal keep
+// two drawables (ng_low_latency).
+func setUpRenderer(r *C.SDL_Renderer) { C.ng_low_latency(r) }
 
 // representDelay is how long after a change of the window size ng presents
 // the window again. When a live resize (the user dragging the window's
@@ -44,8 +45,9 @@ func lowLatency(r *C.SDL_Renderer) { C.ng_low_latency(r) }
 // (docs/macos.md, "Resizing").
 const representDelay = 100 * time.Millisecond
 
-// presentAgainLater presents the window again representDelay from now.
-func (a *App) presentAgainLater() {
+// afterResize is called after the window size changed: it presents the
+// window again representDelay from now.
+func (a *App) afterResize() {
 	time.AfterFunc(representDelay, func() { a.post(a.present) })
 }
 

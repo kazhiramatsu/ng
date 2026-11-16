@@ -274,7 +274,7 @@ func (a *App) createRenderer() error {
 	if a.ren == nil {
 		return sdlError("SDL_CreateRenderer")
 	}
-	lowLatency(a.ren)
+	setUpRenderer(a.ren)
 	if a.atlasTex = C.ng_create_texture(a.ren, C.SDL_TEXTUREACCESS_STATIC, atlasSize, atlasSize); a.atlasTex == nil {
 		return sdlError("atlas texture")
 	}
@@ -684,12 +684,16 @@ func (a *App) loadFonts(guifont, guifontwide string, linespace int) error {
 	dpi := a.dpi()
 	key := fmt.Sprintf("%s\x00%s\x00%d\x00%f", guifont, guifontwide, linespace, dpi)
 	if key == a.fontKey && a.fonts != nil {
+		a.tracef(time.Now(), "font    unchanged guifont=%q guifontwide=%q dpi=%.1f", guifont, guifontwide, dpi)
 		return nil
 	}
 	f, err := font.NewSet(guifont, guifontwide, dpi, linespace)
 	if err != nil {
+		a.tracef(time.Now(), "font    guifont=%q guifontwide=%q dpi=%.1f: %v", guifont, guifontwide, dpi, err)
 		return err
 	}
+	a.tracef(time.Now(), "font    guifont=%q guifontwide=%q dpi=%.1f -> %s warnings=%q",
+		guifont, guifontwide, dpi, f.Describe(), f.Warnings)
 	for _, w := range f.Warnings {
 		a.errorMessage(w)
 	}
@@ -1132,7 +1136,7 @@ func (a *App) handle(e event) bool {
 			a.settleAt = time.Now().Add(settleDelay)
 		}
 		a.paintDirty()
-		a.presentAgainLater()
+		a.afterResize()
 		return true
 	case C.SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
 		if err := a.loadFonts(a.scr.OptionString("guifont"), a.scr.OptionString("guifontwide"),

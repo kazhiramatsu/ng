@@ -22,7 +22,7 @@ Merges from Shougo/ng then rarely meet the macOS code.
 | Files | What differs on macOS |
 | --- | --- |
 | `internal/font/font_darwin.go`, `font_linux.go` | Font names (`loadFamily`) and the order of fallback fonts (`reorder`) |
-| `internal/gui/renderer_darwin.go`, `renderer_linux.go` | SDL_Renderer on Metal: two drawables (`lowLatency`), presenting again after a resize (`presentAgainLater`) |
+| `internal/gui/renderer_darwin.go`, `renderer_linux.go` | SDL_Renderer on Metal: two drawables once the renderer is made (`setUpRenderer`), presenting again after a resize (`afterResize`) |
 | `internal/gui/metal_darwin.go`, `metal_darwin.m`, `liveresize_darwin.go`, `renderer.go` | ng's own Metal renderer, picked by `createWindow` and `ownRenderer` in `renderer_darwin.go` (`renderer_linux.go` keeps SDL_Renderer) |
 
 Keys, the trackpad and font sizes in points are still in shared files
@@ -265,7 +265,7 @@ the same with two or three drawables, and with resizes animated by
 `setFrame:display:animate:`, which macOS also runs as a live resize. A
 capture of ng's own window agreed: its content stopped changing 12 ms
 after the resize. So ng presents again 100 ms after the window size
-changes (`presentAgainLater`). Resized by hand, the frames 3 to 8 ms
+changes (`afterResize`). Resized by hand, the frames 3 to 8 ms
 after the release were not shown and those 100 ms after were, in 7 of 7
 resizes.
 
