@@ -9,7 +9,7 @@ import (
 )
 
 // On macOS fontconfig knows the monospace fonts under other names (see
-// ng_alias): "monospace" must be Menlo, not Andale Mono or (fontconfig 2.17
+// loadFamily): "monospace" must be Menlo, not Andale Mono or (fontconfig 2.17
 // under a Japanese locale) a proportional Hiragino, and SF Mono, the first
 // font of Neovim's default 'guifont' there, is a hidden system font. Each
 // loads without warnings, with real bold and italic faces.
