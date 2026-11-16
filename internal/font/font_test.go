@@ -171,17 +171,71 @@ func TestCombiningCharacter(t *testing.T) {
 	}
 }
 
+// As in GVim, a missing family in a list is skipped without a word when
+// another one is found.
 func TestUnknownFamilyFallsBack(t *testing.T) {
-	s, err := NewSet("No Such Font Family 12345,monospace:h10", "", 96, 0)
+	s, err := NewSet("No Such Font Family,monospace:h10", "No Such Wide Font,monospace", 96, 0)
+	if err != nil {
+		t.Skip(err)
+	}
+	defer s.Close()
+	if len(s.Warnings) != 0 {
+		t.Errorf("unexpected warnings: %v", s.Warnings)
+	}
+	if s.Glyph("A", 0, 1).Empty() {
+		t.Error("monospace fallback did not render")
+	}
+}
+
+// A missing 'guifontwide' family must be reported when the set is made:
+// the caller shows Warnings only then, and the wide faces were loaded
+// lazily on the first double-width cell, so the warning was lost and the
+// automatic fallback was used without a word.
+func TestUnknownWideFamilyWarns(t *testing.T) {
+	s, err := NewSet("Courier 10 Pitch,monospace:h11", "No Such Wide Font", 96, 0)
 	if err != nil {
 		t.Skip(err)
 	}
 	defer s.Close()
 	if len(s.Warnings) == 0 {
-		t.Error("expected a warning for the missing family")
+		t.Error("expected a warning for the missing guifontwide family")
 	}
-	if s.Glyph("A", 0, 1).Empty() {
-		t.Error("monospace fallback did not render")
+	// Only where some installed font has the character.
+	plain, err := NewSet("Courier 10 Pitch,monospace:h11", "", 96, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer plain.Close()
+	if !plain.Glyph("漢", 0, 2).Empty() && s.Glyph("漢", 0, 2).Empty() {
+		t.Error("automatic fallback did not render 漢")
+	}
+}
+
+// Noto Sans CJK's line metrics are 1.45 em, taller than the cell of a
+// Latin font at a similar size. Fitting them into the cell shrank every
+// kanji to the same small size whatever the 'guifontwide' size, leaving a
+// gap between characters. The em box (OS/2 typo metrics) is what must fit.
+func TestWideFontFillsCells(t *testing.T) {
+	s, err := NewSet("Courier 10 Pitch 15", "Noto Sans CJK JP:h18", 96, 0)
+	if err != nil {
+		t.Skip(err)
+	}
+	defer s.Close()
+	if len(s.Warnings) != 0 {
+		t.Skip(s.Warnings)
+	}
+	g := s.Glyph("漢", 0, 2)
+	checkFits(t, s, g, 2, "漢 at h18")
+	if want := 2 * s.CellW * 3 / 4; g.W < want {
+		t.Errorf("漢 is %d pixels wide in two %d-pixel cells, want at least %d", g.W, s.CellW, want)
+	}
+	small, err := NewSet("Courier 10 Pitch 15", "Noto Sans CJK JP:h12", 96, 0)
+	if err != nil {
+		t.Skip(err)
+	}
+	defer small.Close()
+	if w := small.Glyph("漢", 0, 2).W; w >= g.W {
+		t.Errorf("guifontwide size has no effect: 漢 is %d pixels at h12 and %d at h18", w, g.W)
 	}
 }
 

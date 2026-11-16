@@ -22,6 +22,7 @@ package font
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_SYNTHESIS_H
+#include FT_TRUETYPE_TABLES_H
 #include <fontconfig/fontconfig.h>
 
 typedef struct {
@@ -197,6 +198,26 @@ enum {
 static FT_GlyphSlot ng_slot(FT_Face f) { return f->glyph; }
 static long ng_ascender(FT_Face f) { return f->size->metrics.ascender; }
 static long ng_descender(FT_Face f) { return f->size->metrics.descender; }
+
+// ng_box gives the vertical box a fallback glyph is fitted into, in 26.6
+// pixels: the typographic ascender and descender (OS/2) when they are
+// tighter than the line metrics. CJK fonts put their em box there, while
+// their line metrics add a line gap (Noto Sans CJK: 1.45 em).
+static void ng_box(FT_Face f, long *asc, long *desc) {
+	*asc = f->size->metrics.ascender;
+	*desc = f->size->metrics.descender;
+	if (!FT_IS_SCALABLE(f))
+		return;
+	TT_OS2 *os2 = FT_Get_Sfnt_Table(f, FT_SFNT_OS2);
+	if (!os2 || os2->version == 0xFFFF || os2->sTypoAscender <= 0 || os2->sTypoDescender > 0)
+		return;
+	long a = FT_MulFix(os2->sTypoAscender, f->size->metrics.y_scale);
+	long d = FT_MulFix(os2->sTypoDescender, f->size->metrics.y_scale);
+	if (a - d < *asc - *desc) {
+		*asc = a;
+		*desc = d;
+	}
+}
 static int ng_scalable(FT_Face f) { return FT_IS_SCALABLE(f) ? 1 : 0; }
 static int ng_num_fixed(FT_Face f) { return f->num_fixed_sizes; }
 static int ng_fixed_height(FT_Face f, int i) { return f->available_sizes[i].height; }
@@ -207,6 +228,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"path/filepath"
+	"strings"
 	"sync"
 	"unicode/utf8"
 	"unsafe"
@@ -354,6 +377,10 @@ func NewSet(guifont, guifontwide string, dpi float64, linespace int) (*Set, erro
 		s.Close()
 		return nil, err
 	}
+	// Load the regular 'guifontwide' faces now, not on the first
+	// double-width cell: Warnings is read only after NewSet returns, and a
+	// missing family would otherwise fall back without a word.
+	s.wides(0)
 	return s, nil
 }
 
@@ -375,20 +402,43 @@ func (s *Set) Close() {
 	}
 }
 
+// Describe tells which font files the regular style uses, for --trace:
+// the 'guifont' faces, then the 'guifontwide' faces after "wide".
+func (s *Set) Describe() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%.1fpt cell %dx%d", s.size, s.CellW, s.CellH)
+	for _, f := range s.primaries(0) {
+		fmt.Fprintf(&b, " %s", filepath.Base(f.path))
+	}
+	if fs := s.wides(0); len(fs) > 0 {
+		b.WriteString(" wide")
+		for _, f := range fs {
+			fmt.Fprintf(&b, " %s@%.1fpt", filepath.Base(f.path), f.base)
+		}
+	}
+	return b.String()
+}
+
 // Size returns the font size in points.
 func (s *Set) Size() float64 { return s.size }
 
+// facesFor loads the faces of a 'guifont' or 'guifontwide' list. As in
+// GVim, a family that is not installed is skipped silently while another
+// one in the list is found, so that one setting serves several machines;
+// when none is, the regular style reports them all.
 func (s *Set) facesFor(families []string, style Style, size float64) []*face {
 	var out []*face
+	var errs []string
 	for _, fam := range families {
 		f, err := s.loadFamily(fam, style, size)
 		if err != nil {
-			if style == 0 {
-				s.Warnings = append(s.Warnings, err.Error())
-			}
+			errs = append(errs, err.Error())
 			continue
 		}
 		out = append(out, f)
+	}
+	if len(out) == 0 && style == 0 {
+		s.Warnings = append(s.Warnings, errs...)
 	}
 	return out
 }
@@ -721,7 +771,9 @@ func (s *Set) render(text string, style Style, cells int, spill bool) *Glyph {
 	if l, r, ok := s.layoutBox(f, text); ok {
 		boxL, boxR = l, r
 		wide = cells == 1 && boxR-boxL > wideInk*float64(s.CellW)
-		h := float64(C.ng_ascender(f.ft)-C.ng_descender(f.ft)) / 64
+		var asc, desc C.long
+		C.ng_box(f.ft, &asc, &desc)
+		h := float64(asc-desc) / 64
 		if !primary || cells != 1 || wide {
 			if w := boxR - boxL; w > float64(availW) {
 				scale = math.Min(scale, float64(availW)/w)
@@ -782,8 +834,9 @@ func (s *Set) render(text string, style Style, cells int, spill bool) *Glyph {
 		// glyph's vertical extent in the cell.
 		baseline := s.Baseline
 		if !primary {
-			asc := ceil26(C.ng_ascender(f.ft))
-			desc := -floor26(C.ng_descender(f.ft))
+			var a, d C.long
+			C.ng_box(f.ft, &a, &d)
+			asc, desc := ceil26(a), -floor26(d)
 			if asc+desc <= s.CellH {
 				baseline = max(asc, min(s.Baseline, s.CellH-desc))
 			} else {
