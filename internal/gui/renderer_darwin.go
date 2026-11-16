@@ -6,7 +6,6 @@ package gui
 #cgo LDFLAGS: -lobjc
 #include <objc/message.h>
 #include "sdl.h"
-#include "metal.h"
 
 // ng_low_latency makes Metal keep two drawables instead of three. With
 // three, the window server showed a frame two refreshes after it was
@@ -24,14 +23,11 @@ static void ng_low_latency(SDL_Renderer *r) {
 */
 import "C"
 
-import (
-	"os"
-	"time"
-)
+import "time"
 
 // SDL_Renderer draws with Metal on macOS, where two of its habits cost
-// latency or left a stale frame on the screen. renderer_linux.go has the
-// same functions, doing nothing.
+// latency or left a stale frame on the screen. On Linux these two do
+// nothing (renderer_linux.go).
 
 // setUpRenderer is called once the renderer is made: it makes Metal keep
 // two drawables (ng_low_latency).
@@ -49,36 +45,4 @@ const representDelay = 100 * time.Millisecond
 // window again representDelay from now.
 func (a *App) afterResize() {
 	time.AfterFunc(representDelay, func() { a.post(a.present) })
-}
-
-// SDL_Renderer draws only when asked for, or when Metal is not available:
-// ng draws with a Metal renderer of its own (metal_darwin.go).
-// renderer_linux.go has the same two functions, for SDL_Renderer.
-
-// sdlRenderer reports whether the environment asks for SDL_Renderer
-// instead of ng's Metal renderer, with NG_RENDERER=sdl.
-func sdlRenderer() bool { return os.Getenv("NG_RENDERER") == "sdl" }
-
-// createWindow creates the hidden window, for Metal unless SDL_Renderer is
-// to draw.
-func (a *App) createWindow(title *C.char, w, h C.int) *C.SDL_Window {
-	if sdlRenderer() {
-		return C.ng_create_window(title, w, h)
-	}
-	return C.ng_metal_create_window(title, w, h)
-}
-
-// ownRenderer returns ng's Metal renderer for the window, or nil when
-// SDL_Renderer is to draw: it was asked for, or Metal is not available.
-func (a *App) ownRenderer() renderer {
-	if sdlRenderer() {
-		return nil
-	}
-	m := newMetal(a.win, metalAtlasSize, metalAtlasMaxSize)
-	if m == nil {
-		return nil
-	}
-	live = a
-	C.ng_metal_watch_live_resize(m.m)
-	return m
 }

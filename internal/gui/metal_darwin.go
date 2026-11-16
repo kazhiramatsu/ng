@@ -12,6 +12,7 @@ import "C"
 import (
 	"image"
 	"image/draw"
+	"os"
 	"unsafe"
 
 	"github.com/Shougo/ng/internal/atlas"
@@ -62,6 +63,10 @@ type metal struct {
 
 	images   []C.ng_image_draw
 	imageTex map[uint32]metalImage
+
+	// live is set while drawing during a live resize (liveResize): a
+	// frame is presented together with the window's new size.
+	live bool
 }
 
 // metalImage is the texture of an image placed with vim.ui.img.
@@ -84,6 +89,38 @@ func newMetal(win *C.SDL_Window, atlasSize, atlasMax int) *metal {
 		packer:    atlas.NewPacker(atlasSize, atlasSize),
 		imageTex:  map[uint32]metalImage{},
 	}
+}
+
+// ng draws with this Metal renderer on macOS, unless SDL_Renderer is asked
+// for or Metal is not available. These replace ownrenderer_darwin.go of
+// the branch macos-support; renderer_linux.go has them for Linux.
+
+// sdlRenderer reports whether the environment asks for SDL_Renderer
+// instead of ng's Metal renderer, with NG_RENDERER=sdl.
+func sdlRenderer() bool { return os.Getenv("NG_RENDERER") == "sdl" }
+
+// createWindow creates the hidden window, for Metal unless SDL_Renderer is
+// to draw.
+func (a *App) createWindow(title *C.char, w, h C.int) *C.SDL_Window {
+	if sdlRenderer() {
+		return C.ng_create_window(title, w, h)
+	}
+	return C.ng_metal_create_window(title, w, h)
+}
+
+// ownRenderer returns ng's Metal renderer for the window, or nil when
+// SDL_Renderer is to draw: it was asked for, or Metal is not available.
+func (a *App) ownRenderer() renderer {
+	if sdlRenderer() {
+		return nil
+	}
+	m := newMetal(a.win, metalAtlasSize, metalAtlasMaxSize)
+	if m == nil {
+		return nil
+	}
+	live = a
+	C.ng_metal_watch_live_resize(m.m)
+	return m
 }
 
 func (m *metal) name() string { return "ng metal, " + C.GoString(C.ng_metal_device(m.m)) }
@@ -282,7 +319,7 @@ func (m *metal) present(v view) (area paint.Rect, cursorX int) {
 		images = &m.images[0]
 	}
 	flags := C.int(0)
-	if v.inStep {
+	if m.live {
 		flags |= C.NG_METAL_TRANSACTION
 	}
 	C.ng_metal_frame(m.m, C.int(v.w), C.int(v.h), C.uint32_t(v.scr.DefaultBG&0xffffff),

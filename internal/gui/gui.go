@@ -1,7 +1,6 @@
 // Package gui is ng's window: SDL3 for the window, input and drawing (with
 // SDL_Renderer, so it runs on OpenGL, Vulkan, Metal or SDL's software
-// renderer under xrdp), and the paint package for what to draw. On macOS
-// a Metal renderer of ng's own draws instead (renderer.go).
+// renderer under xrdp), and the paint package for what to draw.
 package gui
 
 /*
@@ -67,8 +66,7 @@ type App struct {
 
 	win       *C.SDL_Window
 	ren       *C.SDL_Renderer
-	own       renderer // draws instead of ren, or nil
-	inLive    bool     // drawing during a live resize (macOS)
+	own       renderer // draws instead of ren, or nil (renderer.go)
 	screenTex *C.SDL_Texture
 	moveTex   *C.SDL_Texture // scratch for moving screenTex rows (MoveRect); nil: repaint them
 	moveRows  bool           // scrolling moves painted rows (see onCPU)
@@ -947,7 +945,7 @@ func (a *App) present() {
 		area, cursorX := a.own.present(view{
 			scr: a.scr, fonts: a.fonts, w: a.pixW, h: a.pixH,
 			focused: a.focused, cursor: !a.busyHidesCursor(time.Now()),
-			preedit: a.preedit, inStep: a.inLive,
+			preedit: a.preedit,
 		})
 		a.setIMEArea(area, cursorX)
 		a.tracePresent()
@@ -970,6 +968,7 @@ func (a *App) present() {
 	a.tracePresent()
 }
 
+// tracePresent writes the latency and the cursor of a frame to the trace.
 func (a *App) tracePresent() {
 	if a.trace != nil {
 		if l, ok := a.latency.Present(time.Now()); ok {

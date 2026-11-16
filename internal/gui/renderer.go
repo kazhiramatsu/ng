@@ -6,10 +6,9 @@ import (
 	"github.com/Shougo/ng/internal/screen"
 )
 
-// renderer draws the window in place of SDL_Renderer. The only one is
-// ng's Metal renderer on macOS (metal_darwin.go), which ownRenderer
-// returns (renderer_darwin.go); on Linux (renderer_linux.go), and with
-// NG_RENDERER=sdl in the environment, App draws with SDL_Renderer.
+// renderer draws the window in place of SDL_Renderer. On Linux ng draws
+// with SDL_Renderer (ownRenderer returns nil); a fork can draw with a
+// renderer of its own on another system, such as Metal on macOS.
 type renderer interface {
 	name() string
 	// paintGrid paints the rows of s that changed since the last call.
@@ -31,7 +30,4 @@ type view struct {
 	focused bool
 	cursor  bool // draw the cursor
 	preedit paint.Preedit
-	// inStep presents the frame together with the window's new size,
-	// during a live resize on macOS.
-	inStep bool
 }

@@ -35,11 +35,12 @@ func ngLiveResize(sized C.int) {
 // size. It first waits for Neovim's redraw at the new size, up to
 // liveWait; later redraws are shown by the next call.
 func (a *App) liveResize(sized bool) {
-	if a.inLive || a.own == nil || !a.shown || a.fonts == nil {
+	m, _ := a.own.(*metal)
+	if m == nil || m.live || !a.shown || a.fonts == nil {
 		return
 	}
-	a.inLive = true // not again from what this calls (SDL_SetWindowSize)
-	defer func() { a.inLive = false }()
+	m.live = true // not again from what this calls (SDL_SetWindowSize)
+	defer func() { m.live = false }()
 	var w, h C.int
 	C.SDL_GetWindowSizeInPixels(a.win, &w, &h)
 	if int(w) != a.pixW || int(h) != a.pixH {
