@@ -26,8 +26,8 @@ import "C"
 import "time"
 
 // SDL_Renderer draws with Metal on macOS, where two of its habits cost
-// latency or left a stale frame on the screen. renderer_linux.go has the
-// same functions, doing nothing.
+// latency or left a stale frame on the screen. On Linux these two do
+// nothing (renderer_linux.go).
 
 // setUpRenderer is called once the renderer is made: it makes Metal keep
 // two drawables (ng_low_latency).

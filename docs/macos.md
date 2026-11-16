@@ -23,6 +23,7 @@ Merges from Shougo/ng then rarely meet the macOS code.
 | --- | --- |
 | `internal/font/font_darwin.go`, `font_linux.go` | Font names (`loadFamily`) and the order of fallback fonts (`reorder`) |
 | `internal/gui/renderer_darwin.go`, `renderer_linux.go` | SDL_Renderer on Metal: two drawables once the renderer is made (`setUpRenderer`), presenting again after a resize (`afterResize`) |
+| `internal/gui/ownrenderer_darwin.go`, `renderer_linux.go` | The window and who draws (`createWindow`, `ownRenderer`): SDL_Renderer here. The branch metal-renderer replaces this file with a Metal renderer of ng's own (`renderer.go`) |
 
 Keys, the trackpad and font sizes in points are still in shared files
 (`gui.go`, `sdl.c`, `input.go`), behind `macOS` or
