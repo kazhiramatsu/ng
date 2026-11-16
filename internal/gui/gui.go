@@ -61,6 +61,7 @@ type App struct {
 
 	win       *C.SDL_Window
 	ren       *C.SDL_Renderer
+	own       renderer // draws instead of ren, or nil (renderer.go)
 	screenTex *C.SDL_Texture
 	texW      int
 	texH      int
@@ -218,7 +219,7 @@ func (a *App) Run(connect Connector, opt Options) error {
 	a.mark("sdl initialized (video driver " + C.GoString(C.SDL_GetCurrentVideoDriver()) + ")")
 
 	title := C.CString("ng")
-	a.win = C.ng_create_window(title, 800, 600)
+	a.win = a.createWindow(title, 800, 600)
 	C.free(unsafe.Pointer(title))
 	if a.win == nil {
 		return sdlError("SDL_CreateWindow")
@@ -226,16 +227,15 @@ func (a *App) Run(connect Connector, opt Options) error {
 	defer C.SDL_DestroyWindow(a.win)
 	a.setIcon()
 	a.mark("window created")
-	a.ren = C.SDL_CreateRenderer(a.win, nil)
-	if a.ren == nil {
-		return sdlError("SDL_CreateRenderer")
+	if a.own = a.ownRenderer(); a.own != nil {
+		defer a.own.close()
+		a.mark("renderer created (" + a.own.name() + ")")
+	} else if err := a.createRenderer(); err != nil {
+		return err
 	}
-	defer C.SDL_DestroyRenderer(a.ren)
-	if a.atlasTex = C.ng_create_texture(a.ren, C.SDL_TEXTUREACCESS_STATIC, atlasSize, atlasSize); a.atlasTex == nil {
-		return sdlError("atlas texture")
+	if a.ren != nil {
+		defer C.SDL_DestroyRenderer(a.ren)
 	}
-	a.packer = atlas.NewPacker(atlasSize, atlasSize)
-	a.mark("renderer created (" + C.GoString(C.SDL_GetRendererName(a.ren)) + ")")
 
 	a.scr = screen.New(opt.Cols, opt.Rows)
 	a.gridCols, a.gridRows = opt.Cols, opt.Rows
@@ -246,6 +246,21 @@ func (a *App) Run(connect Connector, opt Options) error {
 			strings.ReplaceAll(latency.Summary(a.latency.Samples()), "\n", "\n# "))
 	}
 	return err
+}
+
+// createRenderer makes SDL's renderer and the glyph atlas.
+func (a *App) createRenderer() error {
+	a.ren = C.SDL_CreateRenderer(a.win, nil)
+	if a.ren == nil {
+		return sdlError("SDL_CreateRenderer")
+	}
+	setUpRenderer(a.ren)
+	if a.atlasTex = C.ng_create_texture(a.ren, C.SDL_TEXTUREACCESS_STATIC, atlasSize, atlasSize); a.atlasTex == nil {
+		return sdlError("atlas texture")
+	}
+	a.packer = atlas.NewPacker(atlasSize, atlasSize)
+	a.mark("renderer created (" + C.GoString(C.SDL_GetRendererName(a.ren)) + ")")
+	return nil
 }
 
 // session connects to Neovim and attaches ng's UI on a goroutine. setup,
@@ -614,6 +629,10 @@ func (a *App) loadFonts(guifont, guifontwide string, linespace int) error {
 }
 
 func (a *App) resetAtlas() {
+	if a.own != nil {
+		a.own.resetAtlas()
+		return
+	}
 	clear(a.glyphs)
 	a.packer.Reset()
 }
@@ -761,6 +780,10 @@ func (a *App) paintDirty() {
 	if !a.shown || a.fonts == nil {
 		return
 	}
+	if a.own != nil {
+		a.own.paintGrid(a.scr, a.fonts)
+		return
+	}
 	full := a.ensureScreenTexture()
 	if a.screenTex == nil {
 		return
@@ -782,12 +805,22 @@ func (a *App) paintDirty() {
 
 // present shows the screen texture and the cursor on top of it.
 func (a *App) present() {
-	if a.screenTex == nil || !a.shown {
+	if a.screenTex == nil && a.own == nil || !a.shown {
 		return
 	}
 	if !a.presented {
 		a.presented = true
 		a.mark("first frame presented")
+	}
+	if a.own != nil {
+		area, cursorX := a.own.present(view{
+			scr: a.scr, fonts: a.fonts, w: a.pixW, h: a.pixH,
+			focused: a.focused, cursor: !a.busyHidesCursor(time.Now()),
+			preedit: a.preedit,
+		})
+		a.setIMEArea(area, cursorX)
+		a.tracePresent()
+		return
 	}
 	C.ng_blit(a.ren, a.screenTex, C.int(a.pixW), C.int(a.pixH))
 	a.dropImages()
@@ -803,6 +836,11 @@ func (a *App) present() {
 	a.flushGlyphs()
 	a.setIMEArea(area, cursorX)
 	C.SDL_RenderPresent(a.ren)
+	a.tracePresent()
+}
+
+// tracePresent writes the latency and the cursor of a frame to the trace.
+func (a *App) tracePresent() {
 	if a.trace != nil {
 		if l, ok := a.latency.Present(time.Now()); ok {
 			a.tracef(time.Now(), "latency %.2f ms for %s (queue %.2f, nvim %.2f, frame %.2f)",
@@ -945,6 +983,7 @@ func (a *App) handle(e event) bool {
 			a.settleAt = time.Now().Add(settleDelay)
 		}
 		a.paintDirty()
+		a.afterResize()
 		return true
 	case C.SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
 		if err := a.loadFonts(a.scr.OptionString("guifont"), a.scr.OptionString("guifontwide"),

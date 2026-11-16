@@ -374,7 +374,7 @@ func (s *Set) facesFor(families []string, style Style, size float64) []*face {
 	var out []*face
 	var errs []string
 	for _, fam := range families {
-		f, err := s.load(fam, style, 0, size)
+		f, err := s.loadFamily(fam, style, size)
 		if err != nil {
 			errs = append(errs, err.Error())
 			continue
